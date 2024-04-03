@@ -2,11 +2,10 @@ EXEC = paex_record
 
 EXEC2 = tutorial_cpp_audio_capture
 
-EXEC3 = line_test
+EXEC3 = beamformer
 
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
-		-lrt -lasound -ljack -pthread -I./lib/fftw-3.3.10/api -lfftw3 \
-		-I./lib/koolplot1_2
+		-lrt -lasound -ljack -pthread -I./lib/fftw-3.3.10/api -lfftw3		
 
 $(EXEC): paex_record.c
 	g++ -o build/$@ $^ $(CLIB)
@@ -14,7 +13,7 @@ $(EXEC): paex_record.c
 $(EXEC2): tutorial_cpp_audio_capture.cpp
 	g++ -o build/$@ $^ $(CLIB)
 
-$(EXEC3): plot_line.c
+$(EXEC3): beamformer.cpp
 	g++ -o build/$@ $^ $(CLIB)
 
 install-deps: install-portaudio install-fftw

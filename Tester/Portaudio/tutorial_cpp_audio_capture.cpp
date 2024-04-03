@@ -4,8 +4,7 @@
 #include <cmath>
 
 #include <portaudio.h> // PortAudio: Used for audio capture
-#include <fftw3.h>     // FFTW:      Provides a discrete FFT algorithm to get
-                       //            frequency data from captured audio
+#include <fftw3.h>     // FFTW:      Provides a discrete FFT algorithm to get frequency data from captured audio
 
 #define SAMPLE_RATE 44100.0   // How many audio samples to capture every second (44100 Hz is standard)
 #define FRAMES_PER_BUFFER 512 // How many audio samples to send to our callback function for each channel
@@ -63,7 +62,7 @@ static int streamCallback(
 
     // Set our spectrogram size in the terminal to 100 characters, and move the
     // cursor to the beginning of the line
-    int dispSize = 256;
+    int dispSize = 100;
     //printf("\r");
 
     // Copy audio sample to FFTW's input buffer
@@ -72,47 +71,19 @@ static int streamCallback(
     }
 
     // Perform FFT on callbackData->in (results will be stored in callbackData->out)
-    fftw_execute(callbackData->p);
-
-    // Draw the spectrogram
-    /*for (int i = 0; i < dispSize; i++) {
-        // Sample frequency data logarithmically
-        double proportion = std::pow(i / (double)dispSize, 4);
-        double freq = callbackData->out[(int)(callbackData->startIndex
-            + proportion * callbackData->spectroSize)];
-
-        // Display full block characters with heights based on frequency intensity
-        if (freq < 0.125) {
-            printf("▁");
-        } else if (freq < 0.25) {
-            printf("▂");
-        } else if (freq < 0.375) {
-            printf("▃");
-        } else if (freq < 0.5) {
-            printf("▄");
-        } else if (freq < 0.625) {
-            printf("▅");
-        } else if (freq < 0.75) {
-            printf("▆");
-        } else if (freq < 0.875) {
-            printf("▇");
-        } else {
-            printf("█");
-        }
-    }*/
+    fftw_execute(callbackData->p);    
 
     //fprintf(callbackData->time, "plot '-'\n");
     fprintf(callbackData->freq, "plot '-'\n");
-    //double proportion = std::pow(i / (double)dispSize, 4);
-    /*double freq = callbackData->out[(int)(callbackData->startIndex
-            + proportion * callbackData->spectroSize)];*/
     for (int i = 0; i < framesPerBuffer; i++){
         /*if (std::abs(callbackData->in[i]) < 0.005){
             fprintf(callbackData->time, "%g %g\n", (double)i/NUM_CHANNELS, 0.0);    
         }
         else{*/
             //fprintf(callbackData->time, "%g %g\n", (double)i, callbackData->in[i]);
-            fprintf(callbackData->freq, "%g %g\n", (double)i, std::abs(callbackData->out[i]));
+            if (i < framesPerBuffer/2 + 1){ // only write the first half of values as the fft is mirrored
+                fprintf(callbackData->freq, "%g %g\n", (double)i, std::abs(callbackData->out[i]));
+            }                
         }
         //}        
     /*for (int i = 0; i < framesPerBuffer; ++i)
@@ -132,7 +103,7 @@ static int streamCallback(
 
 int main() {
     // Initialize PortAudio
-    PaError err;
+    /*PaError err;
     err = Pa_Initialize();
     checkErr(err);
 
@@ -176,7 +147,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("Device = %d\n", device);
+    printf("Device = %d\n", device);*/
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
@@ -194,14 +165,14 @@ int main() {
         FFTW_R2HC, FFTW_ESTIMATE
     );
     double sampleRatio = FRAMES_PER_BUFFER / SAMPLE_RATE;
-    spectroData->startIndex = std::ceil(sampleRatio * SPECTRO_FREQ_START);
+    spectroData->startIndex = std::ceil(sampleRatio * SPECTRO_FREQ_START); // 1 ???
     spectroData->spectroSize = min(
         std::ceil(sampleRatio * SPECTRO_FREQ_END),
         FRAMES_PER_BUFFER / 2.0
-    ) - spectroData->startIndex;
+    ) - spectroData->startIndex;    
 
-    //spectroData->time = popen("gnuplot", "w");
-    spectroData->freq = popen("gnuplot", "w");
+    spectroData->time = popen("gnuplot", "w");
+    /*spectroData->freq = popen("gnuplot", "w");
 
     // Define stream capture specifications
     PaStreamParameters inputParameters;
@@ -251,7 +222,7 @@ int main() {
     fftw_free(spectroData->out);
     free(spectroData);
 
-    printf("\n");
+    printf("\n");*/
 
     return EXIT_SUCCESS;
 }
