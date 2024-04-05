@@ -4,6 +4,8 @@ EXEC2 = tutorial_cpp_audio_capture
 
 EXEC3 = beamformer
 
+EXEC4 = plot_signal
+
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
 		-lrt -lasound -ljack -pthread -I./lib/fftw-3.3.10/api -lfftw3		
 
@@ -14,6 +16,9 @@ $(EXEC2): tutorial_cpp_audio_capture.cpp
 	g++ -o build/$@ $^ $(CLIB)
 
 $(EXEC3): beamformer.cpp
+	g++ -o build/$@ $^ $(CLIB)
+
+$(EXEC4): plot_signal.cpp
 	g++ -o build/$@ $^ $(CLIB)
 
 install-deps: install-portaudio install-fftw
