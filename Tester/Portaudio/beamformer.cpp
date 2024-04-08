@@ -31,7 +31,7 @@ static int streamCallback(
     // We will not be modifying the output buffer. This line is a no-op.
     (void)outputBuffer;
 
-    FILE* signal = (FILE*)userData;
+    (void)userData;
 
     // beamform
     beamforming(in, theta, phi);
@@ -60,9 +60,8 @@ static int streamCallback(
     }
     beams = beamforming(in, precisetheta, precisephi);*/
 
-    // print direction of strongest beam
-    printf("Theta: %f degrees.\n", theta[thetaID]);
-    printf("Phi: %f degrees.\n", phi[phiID]);
+    // Display the buffered changes to stdout in the terminal
+    fflush(stdout);
 
     return 0;
 }
@@ -127,6 +126,8 @@ int main()
     inputParameters.hostApiSpecificStreamInfo = NULL;
     inputParameters.sampleFormat = paFloat32;
     inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
+
+    //FILE* signal = popen("gnuplot", "w");
 
     // Open the PortAudio stream
     PaStream* stream;

@@ -1,3 +1,4 @@
+//#include <SFML/Graphics.hpp>
 #include <stdlib.h>
 #include <stdio.h>
 #include <cstring>
@@ -24,6 +25,9 @@
 #define C (340.0) // m/s
 #define ARRAY_DIST (0.042) // m
 
+#define WINDOW_WIDTH (640)
+#define WINDOW_HEIGHT (480)
+
 // Define our callback data (data that is passed to every callback function call)
 typedef struct {
     //double* in;      // Input buffer, will contain our audio sample
@@ -31,7 +35,9 @@ typedef struct {
     //fftw_plan p;     // Created by FFTW to facilitate FFT calculation
     //int startIndex;  // First index of our FFT output to display in the spectrogram
     //int spectroSize; // Number of elements in our FFT output to display from the start index
-    FILE* signal;    
+    //FILE* signal;
+    //sf::RenderWindow* window;
+    //sf::CircleShape* shape;
 } paTestData;
 
 // positions in the microphone array

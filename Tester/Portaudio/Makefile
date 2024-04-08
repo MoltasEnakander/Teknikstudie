@@ -7,7 +7,8 @@ EXEC3 = beamformer
 EXEC4 = plot_signal
 
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
-		-lrt -lasound -ljack -pthread -I./lib/fftw-3.3.10/api -lfftw3		
+		-lrt -lasound -ljack -pthread -I./lib/fftw-3.3.10/api -lfftw3 \
+		-lsfml-graphics -lsfml-window -lsfml-system	
 
 $(EXEC): paex_record.c
 	g++ -o build/$@ $^ $(CLIB)
