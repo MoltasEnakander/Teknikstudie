@@ -31,18 +31,17 @@ static int streamCallback(
     // We will not be modifying the output buffer. This line is a no-op.
     (void)outputBuffer;
 
-    // userData is NULL
-    (void)userData;    
+    FILE* signal = (FILE*)userData;
 
     // beamform
-    std::vector<double> beams2 = beamforming(in, theta, phi);    
+    beamforming(in, theta, phi);
 
     // find strongest beam    
-    auto it = max_element(beams2.begin(), beams2.end());
+    auto it = max_element(beams.begin(), beams.end());
     int index = -1;
-    if (it != beams2.end())  
+    if (it != beams.end())  
     {   
-        index = it - beams2.begin();         
+        index = it - beams.begin();         
     }
     // index should always be set to something valid by now
     
@@ -50,11 +49,8 @@ static int streamCallback(
     int thetaID = index % int(NUM_VIEWS);
     int phiID = index / int(NUM_VIEWS);
 
-    printf("thetaid: %d\n", thetaID);
-    printf("phiID: %d\n", phiID);
-
-    //printf("Result: %f\n", *result/NUM_VIEWS);    
-    //printf("Result2: %d\n", (int)*result);
+    //printf("thetaid: %d\n", thetaID);
+    //printf("phiID: %d\n", phiID);    
 
     // more precise beamforming    
     /*for (int i = 0; i < NUM_VIEWS; ++i)
@@ -63,7 +59,6 @@ static int streamCallback(
         precisephi[i] = phi[phiID] + phi[i] / 10;
     }
     beams = beamforming(in, precisetheta, precisephi);*/
-
 
     // print direction of strongest beam
     printf("Theta: %f degrees.\n", theta[thetaID]);
@@ -74,42 +69,6 @@ static int streamCallback(
 
 int main() 
 {
-    //double delay0 = -(ya[0] * sind(theta[0]) * cosd(phi[0]) + za[0] * sind(phi[0])) * ARRAY_DIST / C * 48000;
-    //printf("Delay 1: %f \n", -(ya[0] * sind(theta[0]) * cosd(phi[0]) + za[0] * sind(phi[0])) * ARRAY_DIST / C * 48000);
-    /*printf("Delay 2: %f \n", -(ya[1] * sind(theta[0]) * cosd(phi[0]) + za[1] * sind(phi[0])) * ARRAY_DIST / C * 48000);
-    printf("Delay 3: %f \n", -(ya[2] * sind(theta[0]) * cosd(phi[0]) + za[2] * sind(phi[0])) * ARRAY_DIST / C * 48000);
-    printf("Delay 4: %f \n", -(ya[3] * sind(theta[0]) * cosd(phi[0]) + za[3] * sind(phi[0])) * ARRAY_DIST / C * 48000);
-    printf("Delay 5: %f \n", -(ya[4] * sind(theta[0]) * cosd(phi[0]) + za[4] * sind(phi[0])) * ARRAY_DIST / C * 48000);*/
-    /*int a = std::floor(delay0);// * NUM_CHANNELS;
-    int b = a + 1;//NUM_CHANNELS;
-    double alpha = b - delay0;// * NUM_CHANNELS;
-    double beta = 1 - alpha;
-
-    printf("a: %d\n", a);
-    printf("b: %d\n", b);
-    printf("alpha: %f\n", alpha);
-    printf("beta %f\n", beta);*/
-    /*for (int i = 0; i < NUM_VIEWS; ++i)
-    {
-        printf("Theta: %f \n", theta[i]);
-        printf("Phi: %f \n", phi[i]);
-    }*/
-
-    //manual debugging
-
-    //int in[FRAMES_PER_BUFFER*NUM_CHANNELS];
-    float* in = (float*)malloc(FRAMES_PER_BUFFER*NUM_CHANNELS * sizeof(float));
-    for (int i = 0; i < FRAMES_PER_BUFFER*NUM_CHANNELS; ++i)
-    {
-        in[i] = i;
-    }
-
-    std::vector<double> beams2 = beamforming(in, theta, phi);
-
-    printf("Beam1: %f\n", beams2[1]);
-
-    free(in);
-
     // Initialize PortAudio
     PaError err;
     err = Pa_Initialize();
@@ -187,8 +146,8 @@ int main()
     err = Pa_StartStream(stream);
     checkErr(err);
 
-    // Wait 10 seconds (PortAudio will continue to capture audio)
-    Pa_Sleep(10 * 1000);
+    // Wait 15 seconds (PortAudio will continue to capture audio)
+    Pa_Sleep(15 * 1000);
 
     // Stop capturing audio
     err = Pa_StopStream(stream);
@@ -210,7 +169,7 @@ int main()
 }
 
 // OH LORD this feels wrong
-std::vector<double> beamforming(const float* inputBuffer, const std::vector<double>& theta, const std::vector<double>& phi)
+void beamforming(const float* inputBuffer, const std::vector<double>& theta, const std::vector<double>& phi)
 {
     /*
         IMPORTANT NOTE ABOUT inputBuffer:
@@ -220,22 +179,18 @@ std::vector<double> beamforming(const float* inputBuffer, const std::vector<doub
         index NUM_CHANNELS will be the second sample of channel 1
         index NUM_CHANNELS+1 will be the second sample of channel 2
     */
-    int a, b;
-    double alpha, beta;
-    /*std::vector<double> beams(NUM_VIEWS*NUM_VIEWS, 0.0);
-    std::vector<double> delay(NUM_CHANNELS, 0.0);
-    std::vector<double> summedSignal(FRAMES_PER_BUFFER, 0.0);*/
-    double beamStrength = 0;
+    int a, b, i, j, k, l;
+    double alpha, beta, beamStrength;    
 
-    for (int i = 0; i < NUM_VIEWS; ++i) // loop theta directions
+    for (i = 0; i < NUM_VIEWS; ++i) // loop theta directions
     {        
-        for (int j = 0; j < NUM_VIEWS; ++j) // loop phi directions
+        for (j = 0; j < NUM_VIEWS; ++j) // loop phi directions
         {
+            std::vector<double> summedSignals(FRAMES_PER_BUFFER, 0.0);
             beamStrength = 0;
-            for (int k = 0; k < NUM_CHANNELS; ++k) // loop channels
+            for (k = 0; k < NUM_CHANNELS; ++k) // loop channels
             {                
                 delay[k] = -(ya[k] * sind(theta[i]) * cosd(phi[j]) + za[k] * sind(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
-                //printf("Delay %d: %f\n", k, delay[k]);
 
                 // whole samples and fractions of samples
                 a = std::floor(delay[k]);
@@ -244,32 +199,27 @@ std::vector<double> beamforming(const float* inputBuffer, const std::vector<doub
                 beta = 1 - alpha;
 
                 // interpolation of left sample
-                for (int l = std::max(-a*NUM_CHANNELS, 0); l < std::min(FRAMES_PER_BUFFER-a*NUM_CHANNELS, FRAMES_PER_BUFFER); l+=NUM_CHANNELS)
-                {                    
-                    summedSignal[l] += alpha * inputBuffer[l+a*NUM_CHANNELS + k];                    
+                for (l = std::max(-a, 0); l < std::min(FRAMES_PER_BUFFER-a, FRAMES_PER_BUFFER); l++)
+                {
+                    summedSignals[l] += alpha * inputBuffer[(l+a)*NUM_CHANNELS + k];
                 }
 
                 // interpolation of right sample
-                for (int l = std::max(-b*NUM_CHANNELS, 0); l < std::min(FRAMES_PER_BUFFER-b*NUM_CHANNELS, FRAMES_PER_BUFFER); l+=NUM_CHANNELS)
+                for (l = std::max(-b, 0); l < std::min(FRAMES_PER_BUFFER-b, FRAMES_PER_BUFFER); l++)
                 {   
-                    summedSignal[l] += beta * inputBuffer[l+b*NUM_CHANNELS + k];
+                    summedSignals[l] += beta * inputBuffer[(l+b)*NUM_CHANNELS + k];
                 }
             }
-
-            for (int k = 0; k < FRAMES_PER_BUFFER; ++k)
+            
+            // normalize and calculate "strength" of beam
+            for (k = 0; k < FRAMES_PER_BUFFER; k++)
             {
-                summedSignal[k] /= 16;
-                beamStrength += summedSignal[k];
+                summedSignals[k] /= NUM_CHANNELS;
+                summedSignals[k] = summedSignals[k] * summedSignals[k] / FRAMES_PER_BUFFER;
+                beamStrength += summedSignals[k]; 
             }
 
-            beams[i + j*NUM_VIEWS] = 10 * std::log10(std::pow(beamStrength/FRAMES_PER_BUFFER, 2));
+            beams[i + j*NUM_VIEWS] = 10 * std::log10(beamStrength);     
         }
-    }
-
-    /*for (int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i)
-    {
-        printf("Beam %d strength: %f \n", i, beams[i]);
-    }*/
-
-    return beams;
+    }    
 }
