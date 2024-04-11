@@ -49,8 +49,7 @@ void beamforming(const float* inputBuffer, const std::vector<double>& theta, con
 std::vector<double> linspace(int a, int num)
 {
     // create a vector of length num
-    std::vector<double> v(NUM_VIEWS, 0);
-    double tmp = 0.0;         
+    std::vector<double> v(NUM_VIEWS, 0);    
              
     // now assign the values to the vector
     for (int i = 0; i < num; i++)

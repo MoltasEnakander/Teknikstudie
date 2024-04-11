@@ -6,9 +6,13 @@ EXEC3 = beamformer
 
 EXEC4 = plot_signal
 
+EXEC5 = plot_signal2
+
+EXEC6 = gpu_beamformer
+
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
-		-lrt -lasound -ljack -pthread -I./lib/fftw-3.3.10/api -lfftw3 \
-		-lsfml-graphics -lsfml-window -lsfml-system	
+		-lrt -lasound -ljack -pthread #-I./lib/fftw-3.3.10/api -lfftw3 \
+		-lsfml-graphics -lsfml-window -lsfml-system	-I /usr/include/python3.8/ -lpython3.8
 
 $(EXEC): paex_record.c
 	g++ -o build/$@ $^ $(CLIB)
@@ -16,11 +20,17 @@ $(EXEC): paex_record.c
 $(EXEC2): tutorial_cpp_audio_capture.cpp
 	g++ -o build/$@ $^ $(CLIB)
 
-$(EXEC3): beamformer.cpp
+$(EXEC3): CPU/beamformer.cpp
 	g++ -o build/$@ $^ $(CLIB)
 
 $(EXEC4): plot_signal.cpp
 	g++ -o build/$@ $^ $(CLIB)
+
+$(EXEC5): plot_signal2.cpp
+	g++ -o build/$@ $^ $(CLIB)
+
+$(EXEC6): GPU/gpu_beamformer.cu
+	nvcc -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack
 
 install-deps: install-portaudio install-fftw
 .PHONY: install-deps
