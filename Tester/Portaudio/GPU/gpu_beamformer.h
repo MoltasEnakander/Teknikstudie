@@ -1,4 +1,3 @@
-//#include <SFML/Graphics.hpp>
 #include <stdlib.h>
 #include <stdio.h>
 #include <cstring>
@@ -28,10 +27,7 @@
 #define WINDOW_HEIGHT (480)
 
 // Define our callback data (data that is passed to every callback function call)
-typedef struct {
-    //double* in;      // Input buffer, will contain our audio sample
-    //double* out;     // Output buffer, FFTW will write to this based on the input buffer's contents    
-    //FILE* signal;
+typedef struct {    
     float* buffer;
     float* gpubeams;
     float* cpubeams;
@@ -44,9 +40,6 @@ typedef struct {
 // positions in the microphone array
 static float ya[16] = {-0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f};
 static float za[16] = {-1.5f, -1.5f, -0.5f, -0.5f, 0.5f, 0.5f, 1.5f, 1.5f, 1.5f, 1.5f, 0.5f, 0.5f, -0.5f, -0.5f, -1.5f, -1.5f};
-
-//void beamforming(const float* inputBuffer, const std::vector<double>& theta, const std::vector<double>& phi);
-
 
 float* linspace(int a, int num)
 {
@@ -62,14 +55,8 @@ float* linspace(int a, int num)
     return f;
 }
 
-//static std::vector<double> theta = linspace(MIN_VIEW, NUM_VIEWS);
-//static std::vector<double> phi = linspace(MIN_VIEW, NUM_VIEWS);
-
 static float* theta = linspace(MIN_VIEW, NUM_VIEWS);
 static float* phi = linspace(MIN_VIEW, NUM_VIEWS);
-
-//static std::vector<double> precisetheta(NUM_VIEWS, 0.0);
-//static std::vector<double> precisephi(NUM_VIEWS, 0.0);
 
 static std::vector<double> beams((NUM_VIEWS)*(NUM_VIEWS), 4.0);
 static std::vector<double> delay(NUM_CHANNELS, 0.0);

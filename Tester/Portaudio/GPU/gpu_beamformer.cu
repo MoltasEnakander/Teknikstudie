@@ -1,9 +1,5 @@
 #include "gpu_beamformer.h"
 
-#include <iostream>
-#include <chrono>
-#include <ctime>
-
 __global__ 
 void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, float* ya, float* za)
 {
@@ -82,8 +78,7 @@ static int streamCallback(
 
     paTestData* data = (paTestData*)userData;
 
-    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory
-    //cudaMemcpy(data->gpubeams, inputBuffer, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // kanske inte behövs
+    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
 
     // beamform
     int numBlocks = 1;
@@ -103,15 +98,6 @@ static int streamCallback(
         }            
         //printf("Beam %d: %f\n", i, data->cpubeams[i]);
     }
-
-    // find strongest beam from data->cpubeams
-    /*auto it = max_element(beams.begin(), beams.end());
-    int index = -1;
-    if (it != beams.end())  
-    {   
-        index = it - beams.begin();         
-    }*/
-    // index should always be set to something valid by now
     
     // convert 1d index to 2d index
     int thetaID = maxID % int(NUM_VIEWS);
@@ -194,9 +180,7 @@ int main()
     cudaMalloc(&(data->theta), sizeof(float) * NUM_VIEWS);
     cudaMalloc(&(data->phi), sizeof(float) * NUM_VIEWS);
     cudaMalloc(&(data->ya), sizeof(float) * NUM_CHANNELS);
-    cudaMalloc(&(data->za), sizeof(float) * NUM_CHANNELS);
-
-    //float
+    cudaMalloc(&(data->za), sizeof(float) * NUM_CHANNELS);    
 
     cudaMemcpy(data->theta, theta, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy theta to GPU memory
     cudaMemcpy(data->phi, phi, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy phi to GPU memory
@@ -253,58 +237,3 @@ int main()
 
     return EXIT_SUCCESS;
 }
-
-/*void beamforming(const float* inputBuffer, const std::vector<double>& theta, const std::vector<double>& phi)
-{
-    /*
-        IMPORTANT NOTE ABOUT inputBuffer:
-        index 0 will be the first sample of channel 1
-        index 1 will be the first sample of channel 2
-        and so on ...
-        index NUM_CHANNELS will be the second sample of channel 1
-        index NUM_CHANNELS+1 will be the second sample of channel 2
-    */
-    /*int a, b, i, j, k, l;
-    double alpha, beta, beamStrength;    
-
-    for (i = 0; i < NUM_VIEWS; ++i) // loop theta directions
-    {        
-        for (j = 0; j < NUM_VIEWS; ++j) // loop phi directions
-        {
-            std::vector<double> summedSignals(FRAMES_PER_BUFFER, 0.0);
-            beamStrength = 0;
-            for (k = 0; k < NUM_CHANNELS; ++k) // loop channels
-            {                
-                delay[k] = -(ya[k] * sind(theta[i]) * cosd(phi[j]) + za[k] * sind(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
-
-                // whole samples and fractions of samples
-                a = std::floor(delay[k]);
-                b = a + 1;
-                alpha = b - delay[k];
-                beta = 1 - alpha;
-
-                // interpolation of left sample
-                for (l = std::max(-a, 0); l < std::min(FRAMES_PER_BUFFER-a, FRAMES_PER_BUFFER); l++)
-                {
-                    summedSignals[l] += alpha * inputBuffer[(l+a)*NUM_CHANNELS + k];
-                }
-
-                // interpolation of right sample
-                for (l = std::max(-b, 0); l < std::min(FRAMES_PER_BUFFER-b, FRAMES_PER_BUFFER); l++)
-                {   
-                    summedSignals[l] += beta * inputBuffer[(l+b)*NUM_CHANNELS + k];
-                }
-            }
-            
-            // normalize and calculate "strength" of beam
-            for (k = 0; k < FRAMES_PER_BUFFER; k++)
-            {
-                summedSignals[k] /= NUM_CHANNELS;
-                summedSignals[k] = summedSignals[k] * summedSignals[k] / FRAMES_PER_BUFFER;
-                beamStrength += summedSignals[k]; 
-            }
-
-            beams[i + j*NUM_VIEWS] = 10 * std::log10(beamStrength);     
-        }
-    }    
-}*/
