@@ -5,37 +5,37 @@
 #include <ctime>
 
 __global__ 
-void beamforming(const float* inputBuffer, float* beams /*, const std::vector<double>& theta, const std::vector<double>& phi*/)
+void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, float* ya, float* za)
 {
     // first parallelization: one view per call
-    int i = 0; // theta idx
-    int j = 0; // phi idx
+    int i = threadIdx.x; // theta idx
+    int j = threadIdx.y; // phi idx    
 
-    beams[0] = 120.0f;
+    int a, b, k, l;
+    float alpha, beta, beamStrength;
+    float delay;
 
-    /*int a, b, i, j, k, l;
-    double alpha, beta, beamStrength;
-
-    std::vector<double> summedSignals(FRAMES_PER_BUFFER, 0.0);
+    //std::vector<double> summedSignals(FRAMES_PER_BUFFER, 0.0);
+    float summedSignals[FRAMES_PER_BUFFER];
     beamStrength = 0;
-    for (k = 0; k < NUM_CHANNELS; ++k) // loop channels
+    for (k = 0; k < NUM_CHANNELS; k++) // loop channels
     {                
-        delay[k] = -(ya[k] * sind(theta[i]) * cosd(phi[j]) + za[k] * sind(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
+        delay = -(ya[k] * sinf(theta[i]) * cosf(phi[j]) + za[k] * sinf(phi[j]));// * ARRAY_DIST / C * SAMPLE_RATE;
 
         // whole samples and fractions of samples
-        a = std::floor(delay[k]);
+        a = std::floor(delay);
         b = a + 1;
-        alpha = b - delay[k];
+        alpha = b - delay;
         beta = 1 - alpha;
 
         // interpolation of left sample
-        for (l = std::max(-a, 0); l < std::min(FRAMES_PER_BUFFER-a, FRAMES_PER_BUFFER); l++)
+        for (l = max(-a, 0); l < min(FRAMES_PER_BUFFER-a, FRAMES_PER_BUFFER); l++)
         {
             summedSignals[l] += alpha * inputBuffer[(l+a)*NUM_CHANNELS + k];
         }
 
         // interpolation of right sample
-        for (l = std::max(-b, 0); l < std::min(FRAMES_PER_BUFFER-b, FRAMES_PER_BUFFER); l++)
+        for (l = max(-b, 0); l < min(FRAMES_PER_BUFFER-b, FRAMES_PER_BUFFER); l++)
         {   
             summedSignals[l] += beta * inputBuffer[(l+b)*NUM_CHANNELS + k];
         }
@@ -46,10 +46,11 @@ void beamforming(const float* inputBuffer, float* beams /*, const std::vector<do
     {
         summedSignals[k] /= NUM_CHANNELS;
         summedSignals[k] = summedSignals[k] * summedSignals[k] / FRAMES_PER_BUFFER;
-        beamStrength += summedSignals[k]; 
+        beamStrength += summedSignals[k];
     }
 
-    beams[i + j*NUM_VIEWS] = 10 * std::log10(beamStrength);     */
+    //beams[i + j * NUM_VIEWS] = i*10.0f + j*1200.0f;
+    beams[i + j*NUM_VIEWS] = 10 * std::log10(beamStrength);
 }
 
 // Callback data, persisted between calls. Allows us to access the data it
@@ -84,12 +85,24 @@ static int streamCallback(
     cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory
     //cudaMemcpy(data->gpubeams, inputBuffer, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // kanske inte behövs
 
-    // beamform    
-    beamforming<<<1,1>>>(data->buffer, data->gpubeams);
+    // beamform
+    int numBlocks = 1;
+    dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->ya, data->za);
 
     cudaMemcpy(data->cpubeams, data->gpubeams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
 
-    printf("Test: %f\n", data->cpubeams[0]);
+    int maxID = 0;
+    float maxVal = data->cpubeams[0];
+
+    for (int i = 1; i < NUM_VIEWS * NUM_VIEWS; i++)
+    {
+        if (maxVal < data->cpubeams[i]){
+            maxID = i;
+            maxVal = data->cpubeams[i];
+        }            
+        //printf("Beam %d: %f\n", i, data->cpubeams[i]);
+    }
 
     // find strongest beam from data->cpubeams
     /*auto it = max_element(beams.begin(), beams.end());
@@ -97,15 +110,15 @@ static int streamCallback(
     if (it != beams.end())  
     {   
         index = it - beams.begin();         
-    }
+    }*/
     // index should always be set to something valid by now
     
     // convert 1d index to 2d index
-    int thetaID = index % int(NUM_VIEWS);
-    int phiID = index / int(NUM_VIEWS);
+    int thetaID = maxID % int(NUM_VIEWS);
+    int phiID = maxID / int(NUM_VIEWS);
 
-    printf("theta: %f\n", theta[thetaID]);
-    printf("phi: %f\n", phi[phiID]);*/
+    printf("theta: %f\n", theta[thetaID] * 180.0f / M_PI);
+    printf("phi: %f\n", phi[phiID] * 180.0f / M_PI);
 
     // Display the buffered changes to stdout in the terminal
     fflush(stdout);
@@ -174,12 +187,22 @@ int main()
     inputParameters.sampleFormat = paFloat32;
     inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
 
-    paTestData* data = (paTestData*)malloc(sizeof(paTestData));
-    //data->buffer = (float*)malloc(sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
+    paTestData* data = (paTestData*)malloc(sizeof(paTestData));    
 
     cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
     cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
-    //cudaMalloc(&(data->cpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
+    cudaMalloc(&(data->theta), sizeof(float) * NUM_VIEWS);
+    cudaMalloc(&(data->phi), sizeof(float) * NUM_VIEWS);
+    cudaMalloc(&(data->ya), sizeof(float) * NUM_CHANNELS);
+    cudaMalloc(&(data->za), sizeof(float) * NUM_CHANNELS);
+
+    //float
+
+    cudaMemcpy(data->theta, theta, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy theta to GPU memory
+    cudaMemcpy(data->phi, phi, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy phi to GPU memory
+    cudaMemcpy(data->ya, ya, NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy ya to GPU memory
+    cudaMemcpy(data->za, za, NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy za to GPU memory
+    
     data->cpubeams = (float*)malloc(NUM_VIEWS*NUM_VIEWS*sizeof(float));
 
     // Open the PortAudio stream
@@ -200,8 +223,8 @@ int main()
     err = Pa_StartStream(stream);
     checkErr(err);
 
-    // Wait 10 seconds (PortAudio will continue to capture audio)
-    Pa_Sleep(10 * 1000);
+    // Wait 25 seconds (PortAudio will continue to capture audio)
+    Pa_Sleep(25 * 1000);
 
     // Stop capturing audio
     err = Pa_StopStream(stream);
@@ -215,9 +238,15 @@ int main()
     err = Pa_Terminate();
     checkErr(err);
 
-    cudaFree(&(data->buffer));
-    cudaFree(&(data->gpubeams));
-    free(&(data->cpubeams));
+    cudaFree(data->buffer);
+    cudaFree(data->gpubeams);
+    cudaFree(data->theta);
+    cudaFree(data->phi);
+    cudaFree(data->ya);
+    cudaFree(data->za);
+    free(theta);
+    free(phi);
+    free(data->cpubeams);
     free(data);
 
     printf("\n");    

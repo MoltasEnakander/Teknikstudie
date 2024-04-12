@@ -35,31 +35,39 @@ typedef struct {
     float* buffer;
     float* gpubeams;
     float* cpubeams;
-
+    float* theta;
+    float* phi;
+    float* ya;
+    float* za;
 } paTestData;
 
 // positions in the microphone array
-static double ya[16] = {-0.5, -1.5, -0.5, -1.5, -0.5, -1.5, -0.5, -1.5, 1.5, 0.5, 1.5, 0.5, 1.5, 0.5, 1.5, 0.5};
-static double za[16] = {-1.5, -1.5, -0.5, -0.5, 0.5, 0.5, 1.5, 1.5, 1.5, 1.5, 0.5, 0.5, -0.5, -0.5, -1.5, -1.5};
+static float ya[16] = {-0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f};
+static float za[16] = {-1.5f, -1.5f, -0.5f, -0.5f, 0.5f, 0.5f, 1.5f, 1.5f, 1.5f, 1.5f, 0.5f, 0.5f, -0.5f, -0.5f, -1.5f, -1.5f};
 
 //void beamforming(const float* inputBuffer, const std::vector<double>& theta, const std::vector<double>& phi);
 
 
-std::vector<double> linspace(int a, int num)
+float* linspace(int a, int num)
 {
     // create a vector of length num
-    std::vector<double> v(NUM_VIEWS, 0);    
+    //std::vector<double> v(NUM_VIEWS, 0);    
+    float* f = (float*)malloc(NUM_VIEWS*sizeof(float));
              
     // now assign the values to the vector
     for (int i = 0; i < num; i++)
     {
-        v[i] = a + i * VIEW_INTERVAL;
+        f[i] = (a + i * VIEW_INTERVAL) * M_PI / 180.0f;
     }
-    return v;
+    return f;
 }
 
-static std::vector<double> theta = linspace(MIN_VIEW, NUM_VIEWS);
-static std::vector<double> phi = linspace(MIN_VIEW, NUM_VIEWS);
+//static std::vector<double> theta = linspace(MIN_VIEW, NUM_VIEWS);
+//static std::vector<double> phi = linspace(MIN_VIEW, NUM_VIEWS);
+
+static float* theta = linspace(MIN_VIEW, NUM_VIEWS);
+static float* phi = linspace(MIN_VIEW, NUM_VIEWS);
+
 //static std::vector<double> precisetheta(NUM_VIEWS, 0.0);
 //static std::vector<double> precisephi(NUM_VIEWS, 0.0);
 
