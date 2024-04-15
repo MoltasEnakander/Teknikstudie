@@ -11,7 +11,7 @@ EXEC5 = plot_signal2
 EXEC6 = gpu_beamformer
 
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
-		-lrt -lasound -ljack -pthread #-I./lib/fftw-3.3.10/api -lfftw3 \
+		-lrt -lasound -ljack -pthread -I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 #-I./lib/fftw-3.3.10/api -lfftw3 \
 		-lsfml-graphics -lsfml-window -lsfml-system	-I /usr/include/python3.8/ -lpython3.8
 
 $(EXEC): paex_record.c

@@ -11,6 +11,7 @@
 
 #define SAMPLE_RATE (44100.0)   // How many audio samples to capture every second (44100 Hz is standard)
 #define FRAMES_PER_BUFFER (2048) // How many audio samples to send to our callback function for each channel
+#define NUM_SECONDS (5)          
 #define NUM_CHANNELS (16)        // Number of audio channels to capture
 #define DEVICE_NAME "UMA16v2: USB Audio (hw:2,0)"
 
@@ -30,14 +31,10 @@
 
 // Define our callback data (data that is passed to every callback function call)
 typedef struct {
-    //double* in;      // Input buffer, will contain our audio sample
-    //double* out;     // Output buffer, FFTW will write to this based on the input buffer's contents
-    //fftw_plan p;     // Created by FFTW to facilitate FFT calculation
-    //int startIndex;  // First index of our FFT output to display in the spectrogram
-    //int spectroSize; // Number of elements in our FFT output to display from the start index
-    //FILE* signal;
-    //sf::RenderWindow* window;
-    //sf::CircleShape* shape;
+    int maxFrameIndex;
+    int frameIndex;
+    double theta;
+    double phi;
 } paTestData;
 
 // positions in the microphone array

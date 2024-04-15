@@ -10,8 +10,7 @@ void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, flo
     int a, b, k, l;
     float alpha, beta, beamStrength;
     float delay;
-
-    //std::vector<double> summedSignals(FRAMES_PER_BUFFER, 0.0);
+    
     float summedSignals[FRAMES_PER_BUFFER];
     beamStrength = 0;
     for (k = 0; k < NUM_CHANNELS; k++) // loop channels
@@ -19,7 +18,7 @@ void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, flo
         delay = -(ya[k] * sinf(theta[i]) * cosf(phi[j]) + za[k] * sinf(phi[j]));// * ARRAY_DIST / C * SAMPLE_RATE;
 
         // whole samples and fractions of samples
-        a = std::floor(delay);
+        a = floor(delay);
         b = a + 1;
         alpha = b - delay;
         beta = 1 - alpha;
@@ -173,7 +172,7 @@ int main()
     inputParameters.sampleFormat = paFloat32;
     inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
 
-    paTestData* data = (paTestData*)malloc(sizeof(paTestData));    
+    paTestData* data = (paTestData*)malloc(sizeof(paTestData));
 
     cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
     cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);

@@ -42,12 +42,11 @@
 #include <math.h>
 
 #include <portaudio.h>
-#include <fftw3.h>
 
 #define SAMPLE_RATE  (44100)
 #define FRAMES_PER_BUFFER (512)
 #define NUM_SECONDS     (5)
-#define NUM_CHANNELS    (16)
+#define NUM_CHANNELS    (1)
 #define DEVICE_NAME     "UMA16v2: USB Audio (hw:2,0)"
 /* #define DITHER_FLAG     (paDitherOff) */
 #define DITHER_FLAG     (0) 
@@ -61,19 +60,11 @@ typedef float SAMPLE;
 #define SAMPLE_SILENCE  (0.0f)
 #endif
 
-#define SPECTRO_FREQ_START  (20)
-#define SPECTRO_FREQ_END    (20000)
-
 typedef struct
 {
     int         frameIndex;     // Index into sample array.
     int         maxFrameIndex;
-    SAMPLE*     recordedSamples;
-    double*     in;             // Input buffer, will contain our audio samples
-    double*     out;            // Output buffer, FFTW will write to this
-    fftw_plan   p;              // Created by FFTW to facilitate FFT calculation
-    int         startIndex;     // First index of our FFT output to display in the spectrogram
-    int         spectroSize;    // Number of elements in our FFT output to display from the start index
+    SAMPLE*     recordedSamples;    
 }
 paTestData;
 
@@ -87,7 +78,7 @@ static int recordCallback( const void *inputBuffer, void *outputBuffer,
                         PaStreamCallbackFlags statusFlags,
                         void *userData )
 {
-    printf("Dags att veva!\n");
+//    printf("Dags att veva!\n");
     paTestData *data = (paTestData*)userData;
     const SAMPLE *rptr = (const SAMPLE*)inputBuffer;
     SAMPLE *wptr = &data->recordedSamples[data->frameIndex * NUM_CHANNELS];
@@ -116,7 +107,6 @@ static int recordCallback( const void *inputBuffer, void *outputBuffer,
     {
         for( i=0; i<framesToCalc; i++ ) 
         {   
-            data->in[i * NUM_CHANNELS] = SAMPLE_SILENCE;         
             for (int j = 0; j < NUM_CHANNELS; j++) // each frame contains a sample point from multiple channels
             {
                 *wptr++ = SAMPLE_SILENCE; // channel j
@@ -127,8 +117,7 @@ static int recordCallback( const void *inputBuffer, void *outputBuffer,
     else
     {
         for( i=0; i<framesToCalc; i++ )
-        {       
-            data->in[i * NUM_CHANNELS] = *rptr; // only listening to channel 1 ???
+        {
             for (int j = 0; j < NUM_CHANNELS; j++) // each frame contains a sample point from multiple channels
             {
                 *wptr++ = *rptr++; // channel j
@@ -137,42 +126,6 @@ static int recordCallback( const void *inputBuffer, void *outputBuffer,
         }
     }
     data->frameIndex += framesToCalc;
-
-    // Perform FFT on callbackData->in (results will be stored in callbackData->out)
-    /*fftw_execute(data->p);
-
-    int dispSize = 100;
-    printf("\r");
-
-    // Draw the spectrogram
-    for (int i = 0; i < dispSize; i++) {
-        // Sample frequency data logarithmically
-        double proportion = std::pow(i / (double)dispSize, 4);
-        double freq = data->out[(int)(data->startIndex
-            + proportion * data->spectroSize)];
-
-        // Display full block characters with heights based on frequency intensity
-        if (freq < 0.125) {
-            printf("▁");
-        } else if (freq < 0.25) {
-            printf("▂");
-        } else if (freq < 0.375) {
-            printf("▃");
-        } else if (freq < 0.5) {
-            printf("▄");
-        } else if (freq < 0.625) {
-            printf("▅");
-        } else if (freq < 0.75) {
-            printf("▆");
-        } else if (freq < 0.875) {
-            printf("▇");
-        } else {
-            printf("█");
-        }
-    }
-
-    // Display the buffered changes to stdout in the terminal
-    fflush(stdout);*/
 
 
     return finished;
@@ -249,23 +202,6 @@ int main(void)
     // --------------------------------------------------------------------------------------------------------------
     // -------------------------- Setup data structure responsible for data storage  --------------------------------
     // --------------------------------------------------------------------------------------------------------------
-    data.in = (double*)malloc(sizeof(double) * FRAMES_PER_BUFFER); //TODO: lägg till för flera kanaler
-    data.out = (double*)malloc(sizeof(double) * FRAMES_PER_BUFFER); //TODO: lägg till för flera kanaler
-    if (data.in == NULL || data.out == NULL) {
-        printf("Could not allocate spectro data\n");
-        Pa_Terminate();
-        exit(EXIT_FAILURE);
-    }
-    data.p = fftw_plan_r2r_1d(
-        FRAMES_PER_BUFFER, data.in, data.out,
-        FFTW_R2HC, FFTW_ESTIMATE
-    );
-    double sampleRatio = FRAMES_PER_BUFFER / SAMPLE_RATE;
-    data.startIndex = std::ceil(sampleRatio * SPECTRO_FREQ_START);
-    data.spectroSize = std::fmin(
-        std::ceil(sampleRatio * SPECTRO_FREQ_END),
-        FRAMES_PER_BUFFER / 2.0
-    ) - data.startIndex;
 
     data.maxFrameIndex = totalFrames = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
     data.frameIndex = 0;
@@ -321,8 +257,8 @@ int main(void)
 
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
     {
-        //Pa_Sleep(1000);
-        //printf("index = %d\n", data.frameIndex ); fflush(stdout);        
+        Pa_Sleep(100);
+        printf("index = %d\n", data.frameIndex ); fflush(stdout);
     }
     if( err < 0 ) {
         printf("Error when listening on stream.\n");
@@ -392,11 +328,8 @@ int main(void)
     }
     #endif
 
-    Pa_Terminate();
+    Pa_Terminate();    
     
-    fftw_destroy_plan(data.p);
-    fftw_free(data.in);
-    fftw_free(data.out);
     free(data.recordedSamples);
 
     return 0;

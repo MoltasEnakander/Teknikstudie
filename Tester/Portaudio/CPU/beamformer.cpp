@@ -1,8 +1,9 @@
 #include "beamformer.h"
 
 #include <iostream>
-#include <chrono>
-#include <ctime>
+
+#include "matplotlibcpp.h"
+namespace plt = matplotlibcpp;
 
 // Callback data, persisted between calls. Allows us to access the data it
 // contains from within the callback function.
@@ -24,14 +25,31 @@ static int streamCallback(
     const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer,
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
-) {
+) {    
     // Cast our input buffer to a float pointer (since our sample format is `paFloat32`)
     float* in = (float*)inputBuffer;
 
     // We will not be modifying the output buffer. This line is a no-op.
     (void)outputBuffer;
 
-    (void)userData;
+    paTestData* data = (paTestData*)userData;
+
+    long framesToCalc;    
+    int finished;
+    unsigned long framesLeft = data->maxFrameIndex - data->frameIndex;
+
+    if( framesLeft < framesPerBuffer )
+    {
+        framesToCalc = framesLeft;
+        finished = paComplete;
+    }
+    else
+    {
+        framesToCalc = framesPerBuffer;
+        finished = paContinue;
+    }
+
+    data->frameIndex += framesToCalc;
 
     // beamform
     beamforming(in, theta, phi);
@@ -49,8 +67,11 @@ static int streamCallback(
     int thetaID = index % int(NUM_VIEWS);
     int phiID = index / int(NUM_VIEWS);
 
-    printf("theta: %f\n", theta[thetaID]);
-    printf("phi: %f\n", phi[phiID]);
+    //printf("theta: %f\n", theta[thetaID]);
+    //printf("phi: %f\n", phi[phiID]);
+
+    data->theta = theta[thetaID];
+    data->phi = phi[phiID];
 
     // more precise beamforming    
     /*for (int i = 0; i < NUM_VIEWS; ++i)
@@ -63,7 +84,7 @@ static int streamCallback(
     // Display the buffered changes to stdout in the terminal
     fflush(stdout);
 
-    return 0;
+    return finished;
 }
 
 int main() 
@@ -116,7 +137,7 @@ int main()
     printf("Device = %d\n", device);
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
-    // --------------------------------------------------------------------------------------------------------------    
+    // --------------------------------------------------------------------------------------------------------------
 
     // Define stream capture specifications
     PaStreamParameters inputParameters;
@@ -127,7 +148,9 @@ int main()
     inputParameters.sampleFormat = paFloat32;
     inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
 
-    //FILE* signal = popen("gnuplot", "w");
+    paTestData* data = (paTestData*)malloc(sizeof(paTestData));
+    data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
+    data->frameIndex = 0;    
 
     // Open the PortAudio stream
     PaStream* stream;
@@ -139,7 +162,7 @@ int main()
         FRAMES_PER_BUFFER,
         paNoFlag,
         streamCallback,
-        NULL
+        data
     );
     checkErr(err);
 
@@ -147,8 +170,23 @@ int main()
     err = Pa_StartStream(stream);
     checkErr(err);
 
-    // Wait 15 seconds (PortAudio will continue to capture audio)
-    Pa_Sleep(15 * 1000);
+    while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
+    {
+        Pa_Sleep(100);
+        plt::clf();
+        plt::scatter(std::vector<double>{data->theta}, std::vector<double>{data->phi}, 25.0, {{"color", "red"}});
+        plt::xlim(MIN_VIEW, MAX_VIEW);
+        plt::ylim(MIN_VIEW, MAX_VIEW);
+        plt::xlabel("theta");
+        plt::xlabel("phi");
+        plt::grid(true);
+        plt::pause(0.05);
+        //printf("theta = %f\n", data->theta );
+        //printf("phi = %f\n", data->phi );
+        printf("maxframeindex = %d\n", data->maxFrameIndex );
+        printf("frameindex = %d\n", data->frameIndex );
+        fflush(stdout);
+    }    
 
     // Stop capturing audio
     err = Pa_StopStream(stream);
@@ -162,7 +200,7 @@ int main()
     err = Pa_Terminate();
     checkErr(err);
 
-    //free(data);
+    free(data);
 
     printf("\n");    
 
