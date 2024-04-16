@@ -6,34 +6,48 @@ namespace plt = matplotlibcpp;
 __global__
 void interpolateChannels(const float* inputBuffer, float* summedSignals, const int i, const int j, const int* a, const int* b, const float* alpha, const float* beta)
 {
-    int id, l;
+    int id;
+    int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index of this thread
+    int l2 = blockIdx.x * blockDim.x + threadIdx.x + (i + j * NUM_VIEWS) * FRAMES_PER_HALFBUFFER; // global index of this thread
     for (int k = 0; k < NUM_CHANNELS; ++k)
     {
-        id = k + j * NUM_CHANNELS + i * NUM_CHANNELS * NUM_VIEWS;
-        l = blockIdx.x * blockDim.x + threadIdx.x;
-        if (l < FRAMES_PER_HALFBUFFER)
+        id = k + j * NUM_CHANNELS + i * NUM_CHANNELS * NUM_VIEWS; // index for beam i,j channel k        
+        if (l1 < FRAMES_PER_HALFBUFFER)
         {
-            if (max(0, -a[id]) == 0 && l < FRAMES_PER_HALFBUFFER - a[id]) // a >= 0
-                summedSignals[l] += alpha[id] * inputBuffer[(l+a[id])*NUM_CHANNELS + k]; // do not write to the a[id] end positions
-            else if (max(0, -a[id]) > 0 && l >= a[id]) 
-                summedSignals[l] += alpha[id] * inputBuffer[(l+a[id])*NUM_CHANNELS + k]; // do not write to the first a[id]-1 positions
+            if (max(0, -a[id]) == 0 && l1 < FRAMES_PER_HALFBUFFER - a[id]) // a >= 0
+                summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the a[id] end positions
+            else if (max(0, -a[id]) > 0 && l1 >= a[id]) 
+                summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the first a[id]-1 positions
 
-            if (max(0, -b[id]) == 0 && l < FRAMES_PER_HALFBUFFER - b[id]) // b >= 0
-                summedSignals[l] += beta[id] * inputBuffer[(l+b[id])*NUM_CHANNELS + k]; // do not write to the b[id] end positions
-            else if (max(0, -b[id]) > 0 && l >= b[id]) 
-                summedSignals[l] += beta[id] * inputBuffer[(l+b[id])*NUM_CHANNELS + k]; // do not write to the first b[id]-1 positions
+            if (max(0, -b[id]) == 0 && l1 < FRAMES_PER_HALFBUFFER - b[id]) // b >= 0
+                summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the b[id] end positions
+            else if (max(0, -b[id]) > 0 && l1 >= b[id]) 
+                summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the first b[id]-1 positions
         }
     }
 }
 
-__global__
-void test(){
-
+__global__ void normalize(float* summedSignals, const int i, const int j)
+{
+    int l2 = blockIdx.x * blockDim.x + threadIdx.x + (i + j * NUM_VIEWS) * FRAMES_PER_HALFBUFFER;
+    summedSignals[l2] /= NUM_CHANNELS;
+    summedSignals[l2] = summedSignals[l2] * summedSignals[l2] / FRAMES_PER_HALFBUFFER;
 }
 
-__device__ float summedSignals[FRAMES_PER_HALFBUFFER];
+__global__ void calcBeamStrength(float* summedSignals, const int i, const int j, float* beams)
+{
+    int id = (i + j*NUM_VIEWS) * FRAMES_PER_HALFBUFFER;
+    for (int q = 0; q < FRAMES_PER_HALFBUFFER; ++q)
+    {
+        beams[i + j*NUM_VIEWS] += summedSignals[id + q];
+    }
+
+    beams[i + j*NUM_VIEWS] = 10 * log10(beams[i + j*NUM_VIEWS]);
+}
+
+//__device__ float summedSignals[FRAMES_PER_HALFBUFFER];
 __global__ 
-void beamforming(const float* inputBuffer, float* beams, const float* theta, const float* phi, const int* a, const int* b, const float* alpha, const float* beta)
+void beamforming(const float* inputBuffer, float* beams, const float* theta, const float* phi, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals)
 {
     // first parallelization: one view per call
     int i = threadIdx.x; // theta idx
@@ -41,27 +55,36 @@ void beamforming(const float* inputBuffer, float* beams, const float* theta, con
 
     //int a, b, k, l;
     //int k;
-    float beamStrength = 0;
-    
-    //float summedSignals[FRAMES_PER_HALFBUFFER] = {0.0f};
-    beamStrength = 0;
+    //float beamStrength = 0;
 
     // interpolate channels
-    interpolateChannels<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(inputBuffer, summedSignals, i, j, a, b, alpha, beta); // CORRECT THIS
-    //test<<<1, 1>>>(); // CORRECT THIS
-    //cudaThreadSynchronize();
+    interpolateChannels<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(inputBuffer, summedSignals, i, j, a, b, alpha, beta);
+    cudaDeviceSynchronize();
     //syncthreads();
+    
+    // normalize each signal component
+    normalize<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(summedSignals, i, j);
+    cudaDeviceSynchronize();
+
+    int numBlocks = 1;
+    dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
+    if (i == 0 && j == 0)
+    {
+        // sum the components of the NUM_VIEWS * NUM_VIEWS beams
+        calcBeamStrength<<<numBlocks, threadsPerBlock >>>(summedSignals, i, j, beams);
+    }
+    
 
     // normalize and calculate "strength" of beam
-    for (int k = 0; k < FRAMES_PER_HALFBUFFER; k++)
+    /*for (int k = 0; k < FRAMES_PER_HALFBUFFER; k++) // this is no longer correct
     {
         summedSignals[k] /= NUM_CHANNELS;
         summedSignals[k] = summedSignals[k] * summedSignals[k] / FRAMES_PER_HALFBUFFER;
         beamStrength += summedSignals[k];
-    }
+    }*/
 
     //beams[i + j * NUM_VIEWS] = i*10.0f + j*1200.0f;
-    beams[i + j*NUM_VIEWS] = 10 * std::log10(beamStrength);
+    //beams[i + j*NUM_VIEWS] = 10 * log10(beamStrength);
 }
 
 // Callback data, persisted between calls. Allows us to access the data it
@@ -112,7 +135,7 @@ static int streamCallback(
     // beamform
     int numBlocks = 1;
     dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta);
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta, data->summedSignals);
     cudaDeviceSynchronize();
 
     cudaMemcpy(data->cpubeams, data->gpubeams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
@@ -208,6 +231,7 @@ int main()
     cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->alpha), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
+    cudaMalloc(&(data->summedSignals), sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES_PER_HALFBUFFER);
     
     cudaMemcpy(data->theta, theta, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy theta to GPU memory
     cudaMemcpy(data->phi, phi, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy phi to GPU memory   
