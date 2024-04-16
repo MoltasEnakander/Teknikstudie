@@ -4,38 +4,41 @@
 namespace plt = matplotlibcpp;
 
 __global__ 
-void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, float* ya, float* za)
+void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, int* a, int* b, float* alpha, float* beta)
 {
     // first parallelization: one view per call
     int i = threadIdx.x; // theta idx
     int j = threadIdx.y; // phi idx    
 
-    int a, b, k, l;
-    float alpha, beta, beamStrength;
-    float delay;
+    //int a, b, 
+    int k, l;
+    //float alpha, beta, 
+    float beamStrength;
+    //float d;
     
     float summedSignals[FRAMES_PER_BUFFER];
     beamStrength = 0;
     for (k = 0; k < NUM_CHANNELS; k++) // loop channels
     {                
-        delay = -(ya[k] * sinf(theta[i]) * cosf(phi[j]) + za[k] * sinf(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
+        /*d = delay[k + j * NUM_CHANNELS + i * NUM_CHANNELS * NUM_VIEWS];
 
         // whole samples and fractions of samples
-        a = floor(delay);
+        a = floor(d);
         b = a + 1;
-        alpha = b - delay;
-        beta = 1 - alpha;
+        alpha = b - d;
+        beta = 1 - alpha;*/
+        int id = k + j * NUM_CHANNELS + i * NUM_CHANNELS * NUM_VIEWS;
 
         // interpolation of left sample
-        for (l = max(-a, 0); l < min(FRAMES_PER_BUFFER-a, FRAMES_PER_BUFFER); l++)
+        for (l = max(-a[id], 0); l < min(FRAMES_PER_BUFFER-a[id], FRAMES_PER_BUFFER); l++)
         {
-            summedSignals[l] += alpha * inputBuffer[(l+a)*NUM_CHANNELS + k];
+            summedSignals[l] += alpha[id] * inputBuffer[(l+a[id])*NUM_CHANNELS + k];
         }
 
         // interpolation of right sample
-        for (l = max(-b, 0); l < min(FRAMES_PER_BUFFER-b, FRAMES_PER_BUFFER); l++)
+        for (l = max(-b[id], 0); l < min(FRAMES_PER_BUFFER-b[id], FRAMES_PER_BUFFER); l++)
         {   
-            summedSignals[l] += beta * inputBuffer[(l+b)*NUM_CHANNELS + k];
+            summedSignals[l] += beta[id] * inputBuffer[(l+b[id])*NUM_CHANNELS + k];
         }
     }
     
@@ -98,8 +101,8 @@ static int streamCallback(
 
     // beamform
     int numBlocks = 1;
-    dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->ya, data->za);
+    dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);    
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta);
 
     cudaMemcpy(data->cpubeams, data->gpubeams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -194,16 +197,20 @@ int main()
     data->frameIndex = 0;
 
     cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
-    cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
+    cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);    
+    cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
+    cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
+    cudaMalloc(&(data->alpha), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
+    cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->theta), sizeof(float) * NUM_VIEWS);
-    cudaMalloc(&(data->phi), sizeof(float) * NUM_VIEWS);
-    cudaMalloc(&(data->ya), sizeof(float) * NUM_CHANNELS);
-    cudaMalloc(&(data->za), sizeof(float) * NUM_CHANNELS);    
-
+    cudaMalloc(&(data->phi), sizeof(float) * NUM_VIEWS);    
+    
+    cudaMemcpy(data->a, a, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->alpha, alpha, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->beta, beta, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(data->theta, theta, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy theta to GPU memory
-    cudaMemcpy(data->phi, phi, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy phi to GPU memory
-    cudaMemcpy(data->ya, ya, NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy ya to GPU memory
-    cudaMemcpy(data->za, za, NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy za to GPU memory
+    cudaMemcpy(data->phi, phi, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy phi to GPU memory    
     
     data->cpubeams = (float*)malloc(NUM_VIEWS*NUM_VIEWS*sizeof(float));
 
@@ -256,11 +263,18 @@ int main()
     checkErr(err);
 
     cudaFree(data->buffer);
-    cudaFree(data->gpubeams);
+    cudaFree(data->gpubeams);    
+    cudaFree(data->a);
+    cudaFree(data->b);
+    cudaFree(data->alpha);
+    cudaFree(data->beta);
     cudaFree(data->theta);
     cudaFree(data->phi);
-    cudaFree(data->ya);
-    cudaFree(data->za);
+    free(delay);
+    free(a);
+    free(b);
+    free(alpha);
+    free(beta);
     free(theta);
     free(phi);
     free(data->cpubeams);

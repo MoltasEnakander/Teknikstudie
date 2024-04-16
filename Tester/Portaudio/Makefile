@@ -42,8 +42,8 @@ $(EXEC7): GPU/gpu_beamformer2.cu
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8
 
 $(EXEC8): GPU/gpu_beamformer3.cu
-	nvcc -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
-			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8
+	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
+			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt
 
 install-deps: install-portaudio install-fftw
 .PHONY: install-deps

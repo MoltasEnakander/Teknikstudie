@@ -31,10 +31,12 @@ typedef struct {
     float* buffer;
     float* gpubeams;
     float* cpubeams;
+    int* a;
+    int* b;
+    float* alpha;
+    float* beta;
     float* theta;
     float* phi;
-    float* ya;
-    float* za;
     int thetaID;
     int phiID;
 } paTestData;
@@ -59,3 +61,64 @@ float* linspace(int a, int num)
 
 static float* theta = linspace(MIN_VIEW, NUM_VIEWS);
 static float* phi = linspace(MIN_VIEW, NUM_VIEWS);
+
+float* calcDelays()
+{
+    float* d = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
+    for (int i = 0; i < NUM_VIEWS; ++i)
+    {
+        for (int j = 0; j < NUM_VIEWS; ++j)
+        {
+            for (int k = 0; k < NUM_CHANNELS; ++k)
+            {                
+                d[k + j*NUM_CHANNELS + i*NUM_CHANNELS*NUM_VIEWS] = -(ya[k] * sinf(theta[i]) * cosf(phi[j]) + za[k] * sinf(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
+            }
+        }
+    }
+    return d;
+}
+static float* delay = calcDelays();
+
+int* calca()
+{
+    int* a = (int*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int));
+    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
+    {
+        a[i] = floor(delay[i]);
+    }
+    return a;
+}
+static int* a = calca();
+
+int* calcb()
+{
+    int* b = (int*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int));
+    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
+    {
+        b[i] = a[i] + 1;
+    }
+    return b;
+}
+static int* b = calcb();
+
+float* calcalpha()
+{
+    float* alpha = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
+    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
+    {
+        alpha[i] = b[i] - delay[i];
+    }
+    return alpha;
+}
+static float* alpha = calcalpha();
+
+float* calcbeta()
+{
+    float* beta = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
+    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
+    {
+        beta[i] = 1 - alpha[i];
+    }
+    return beta;
+}
+static float* beta = calcbeta();
