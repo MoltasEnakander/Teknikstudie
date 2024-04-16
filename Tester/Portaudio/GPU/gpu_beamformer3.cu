@@ -370,9 +370,10 @@ int main()
         fprintf(signal, "set xrange [ -0.5 : %f ] \n", NUM_VIEWS-0.5);
         fprintf(signal, "set yrange [ -0.5 : %f ] \n", NUM_VIEWS-0.5);
         fprintf(signal, "plot '-' matrix with image\n");
-        for(int i = 0; i < NUM_VIEWS; ++i)
+        
+        for (int j = 0; j < NUM_VIEWS; ++j)
         {
-            for (int j = 0; j < NUM_VIEWS; ++j)
+            for(int i = 0; i < NUM_VIEWS; ++i)    
             {
                 fprintf(signal, "%f ", data->cpubeams[i + j*NUM_VIEWS]);
             }
