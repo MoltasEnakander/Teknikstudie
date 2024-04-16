@@ -71,17 +71,50 @@ __global__ void parent_k(const int FRAMES, const int NUM_VIEWS, float* summedSig
 
 	//child_k<<<(FRAMES+255)/256, 256>>>(i, j, FRAMES, NUM_VIEWS, summedSignals);
 
-	/*for (int k = 0; k < FRAMES; ++k)
+	for (int k = 0; k < FRAMES; ++k)
 	{
 		int id = k + (i + j * NUM_VIEWS) * FRAMES;
+		summedSignals[id] = id;
+	}
+}
+
+__global__ void child_k2(const int i, const int j, const int FRAMES, const int NUM_VIEWS, float* summedSignals, const int blockid)
+{
+	int id = blockIdx.x * blockDim.x + threadIdx.x;
+	if (blockid == 1){
+		id += 32 * 32 * FRAMES;
+	}
+	//i = i % 32;
+	id += (i + j * 32) * FRAMES;
+	summedSignals[id] = id;
+}
+
+__global__ void parent_k2(const int FRAMES, const int NUM_VIEWS, float* summedSignals)
+{
+	int i = /*blockIdx.x * blockDim.x +*/ threadIdx.x;
+	int j = /*blockIdx.y * blockDim.y +*/ threadIdx.y;
+	int stop = NUM_VIEWS * NUM_VIEWS - 1024;
+
+	if (blockIdx.x == 1 && threadIdx.x + threadIdx.y * blockDim.x >= stop){
+		return;
+	}
+
+	child_k2<<<(FRAMES+255)/256, 256>>>(i, j, FRAMES, NUM_VIEWS, summedSignals, blockIdx.x);
+
+	/*for (int k = 0; k < FRAMES; ++k)
+	{		
+		int id = k + (i + j * 32) * FRAMES;
+		if (blockIdx.x == 1){
+			id += 32 * 32 * FRAMES;
+		}
 		summedSignals[id] = id;
 	}*/
 }
 
 int main(void)
 {
-	const int NUM_VIEWS = 13;
-	const int FRAMES = 512;
+	const int NUM_VIEWS = 33;
+	const int FRAMES = 32768;
 	float* summedSignals = (float*)malloc(sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES); // each beam will have its own signal buffer of length FRAMES
 	float* d_summedSignals;
 	cudaMalloc(&d_summedSignals, sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES);
@@ -93,27 +126,41 @@ int main(void)
 
 	cudaMemcpy(d_summedSignals, summedSignals, sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES, cudaMemcpyHostToDevice);
 
-	int numBlocks = 1;
-    dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
+	if (NUM_VIEWS * NUM_VIEWS >= 1024){
+		int numBlocks = 2;
+		dim3 threadsPerBlock(32, 32);
+		std::chrono::time_point<std::chrono::system_clock> start, end;
+		start = std::chrono::system_clock::now();
+		parent_k2<<<numBlocks, threadsPerBlock>>>(FRAMES, NUM_VIEWS, d_summedSignals);
+		cudaDeviceSynchronize();
+		end = std::chrono::system_clock::now();
 
-    std::chrono::time_point<std::chrono::system_clock> start, end;
-    start = std::chrono::system_clock::now();
-    parent_k<<<numBlocks, threadsPerBlock>>>(FRAMES, NUM_VIEWS, d_summedSignals);
-    cudaDeviceSynchronize();
-    end = std::chrono::system_clock::now();
+		std::chrono::duration<double> elapsed = end-start;
 
-    std::chrono::duration<double> elapsed = end-start;
+		printf("elapsed: %f s \n", elapsed.count());
+	}
+	else{
+		int numBlocks = 1;
+		dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
 
-    printf("elapsed: %f s \n", elapsed.count());
+		std::chrono::time_point<std::chrono::system_clock> start, end;
+		start = std::chrono::system_clock::now();
+		parent_k<<<numBlocks, threadsPerBlock>>>(FRAMES, NUM_VIEWS, d_summedSignals);
+		cudaDeviceSynchronize();
+		end = std::chrono::system_clock::now();
 
+		std::chrono::duration<double> elapsed = end-start;
+
+		printf("elapsed: %f s \n", elapsed.count());		
+	}
 	
-
-	cudaMemcpy(summedSignals, d_summedSignals, sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES, cudaMemcpyDeviceToHost);
+	cudaMemcpy(summedSignals, d_summedSignals, sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES, cudaMemcpyDeviceToHost);	
 
 	float error = 0.0f;
 	for (int i = 0; i < NUM_VIEWS * NUM_VIEWS * FRAMES; ++i)
 	{
 		error += summedSignals[i] - i;
+		//printf("e: %f %f %d \n", summedSignals[i] - i, summedSignals[i], i);
 	}
 
 	printf("error: %f\n", error);
