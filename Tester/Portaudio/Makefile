@@ -14,6 +14,8 @@ EXEC7 = gpu_beamformer2
 
 EXEC8 = gpu_beamformer3
 
+EXEC9 = gpu_beamformer4
+
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
 		-lrt -lasound -ljack -pthread -I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 #-I./lib/fftw-3.3.10/api -lfftw3 \
 		-lsfml-graphics -lsfml-window -lsfml-system	-I /usr/include/python3.8/ -lpython3.8
@@ -42,6 +44,10 @@ $(EXEC7): GPU/gpu_beamformer2.cu
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8
 
 $(EXEC8): GPU/gpu_beamformer3.cu
+	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
+			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt
+
+$(EXEC9): GPU/gpu_beamformer4.cu
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt
 

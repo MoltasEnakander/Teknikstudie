@@ -1,4 +1,7 @@
+//#define _USE_MATH_DEFINES
 #include "gpu_beamformer3.h"
+#include <stdlib.h>
+#include <time.h>
 
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
@@ -296,9 +299,56 @@ int main()
     err = Pa_StartStream(stream);
     checkErr(err);
 
+    FILE* signal = popen("gnuplot", "w"); 
+
+    /*fprintf(signal, "plot '-' matrix with image\n");
+    for (int i = 0; i < 5; i++){
+        for (int j = 0; j < 5; ++j)
+        {
+            fprintf(signal, "%d ", j);
+        }
+        fprintf(signal, "\n");
+    }
+    fprintf(signal, "e\n");
+    fprintf(signal, "e\n");
+    fflush(signal);    */
+
+    // Display the buffered changes to stdout in the terminal
+    fflush(stdout);
+
+    /*int ncols = NUM_VIEWS;
+    int nrows = NUM_VIEWS;
+    std::vector<std::vector<float>> z;
+    for (int j = 0; j < nrows; ++j)
+    {
+        std::vector<float> z_row;
+        for (int i = 0; i < ncols; ++i)
+        {
+            z_row.push_back(1);
+        }
+        z.push_back(z_row);
+    }   
+
+    plt::figure(2);
+    plt::figure_size(NUM_VIEWS, NUM_VIEWS);
+    plt::title("Beamforming intensity");
+    //plt::clf();
+    plt::imshow(z);
+    plt::xlim(MIN_VIEW, MAX_VIEW);
+    plt::ylim(MIN_VIEW, MAX_VIEW);
+    plt::xlabel("theta");
+    plt::xlabel("phi");*/
+    //plt::pause(0.15); 
+
+    //int random;
+    //srand(time(NULL));
+
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
     {
         //Pa_Sleep(100);
+        // plot maximum direction
+        /*plt::figure(1);
+        plt::title("Max direction plot");
         plt::clf();
         plt::scatter(std::vector<float>{theta[data->thetaID] * 180.0f / (float)M_PI}, std::vector<float>{phi[data->phiID] * 180.0f / (float)M_PI}, 25.0, {{"color", "red"}});
         plt::xlim(MIN_VIEW, MAX_VIEW);
@@ -306,13 +356,38 @@ int main()
         plt::xlabel("theta");
         plt::xlabel("phi");
         plt::grid(true);
-        plt::pause(0.15);
+        plt::pause(0.15);*/
         //printf("theta = %f\n", data->theta );
         //printf("phi = %f\n", data->phi );
         //printf("maxframeindex = %d\n", data->maxFrameIndex );
         //printf("frameindex = %d\n", data->frameIndex );
         //fflush(stdout);
+
+        // plot beamforming results in color map
+        fprintf(signal, "unset key\n");
+        fprintf(signal, "set pm3d\n");
+        fprintf(signal, "set view map\n");
+        fprintf(signal, "set xrange [ -0.5 : %f ] \n", NUM_VIEWS-0.5);
+        fprintf(signal, "set yrange [ -0.5 : %f ] \n", NUM_VIEWS-0.5);
+        fprintf(signal, "plot '-' matrix with image\n");
+        for(int i = 0; i < NUM_VIEWS; ++i)
+        {
+            for (int j = 0; j < NUM_VIEWS; ++j)
+            {
+                fprintf(signal, "%f ", data->cpubeams[i + j*NUM_VIEWS]);
+            }
+            fprintf(signal, "\n");
+        }
+        
+        fprintf(signal, "e\n");
+        fprintf(signal, "e\n");
+        fflush(signal);    
+
+        // Display the buffered changes to stdout in the terminal
+        fflush(stdout);
     }    
+
+
 
     // Stop capturing audio
     err = Pa_StopStream(stream);
