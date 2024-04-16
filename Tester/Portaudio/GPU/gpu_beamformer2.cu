@@ -108,7 +108,7 @@ static int streamCallback(
 
 
     //beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta, data->summedSignals);
-    cudaDeviceSynchronize();
+    cudaDeviceSynchronize();    
     end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;

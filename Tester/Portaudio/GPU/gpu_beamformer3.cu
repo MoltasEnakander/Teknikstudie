@@ -1,7 +1,4 @@
-//#define _USE_MATH_DEFINES
 #include "gpu_beamformer3.h"
-#include <stdlib.h>
-#include <time.h>
 
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
@@ -33,46 +30,15 @@ void interpolateChannels(const float* inputBuffer, float* summedSignals, const i
     }
 }
 
-__global__ void normalize(float* summedSignals, const int i, const int j)
-{
-    int l2 = blockIdx.x * blockDim.x + threadIdx.x + (i + j * NUM_VIEWS) * FRAMES_PER_HALFBUFFER;
-    summedSignals[l2] /= NUM_CHANNELS;
-    summedSignals[l2] = summedSignals[l2] * summedSignals[l2] / FRAMES_PER_HALFBUFFER;
-}
-
-__global__ void calcBeamStrength(float* summedSignals, const int i, const int j, float* beams)
-{
-    //int m = threadIdx.x;
-    //int n = threadIdx.y;
-    beams[i + j*NUM_VIEWS] = 0.0f;
-    int id = (i + j*NUM_VIEWS) * FRAMES_PER_HALFBUFFER;
-    for (int q = 0; q < FRAMES_PER_HALFBUFFER; ++q)
-    {
-        beams[i + j*NUM_VIEWS] += summedSignals[id + q];
-    }    
-    beams[i + j*NUM_VIEWS] = 10 * log10(beams[i + j*NUM_VIEWS]);
-}
-
-//__device__ float summedSignals[FRAMES_PER_HALFBUFFER];
 __global__ 
 void beamforming(const float* inputBuffer, float* beams, const float* theta, const float* phi, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals)
-{
-    // first parallelization: one view per call
+{    
     int i = threadIdx.x; // theta idx
-    int j = threadIdx.y; // phi idx    
-
-    //int a, b, k, l;
-    //int k;
-    //float beamStrength = 0;
+    int j = threadIdx.y; // phi idx   
 
     // interpolate channels
     interpolateChannels<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(inputBuffer, summedSignals, i, j, a, b, alpha, beta);
     cudaDeviceSynchronize();
-    //syncthreads();
-    
-    // normalize each signal component
-    //normalize<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(summedSignals, i, j);
-    //cudaDeviceSynchronize();
 
     int idx;
     float beamstrength = 0.0f;
@@ -86,42 +52,7 @@ void beamforming(const float* inputBuffer, float* beams, const float* theta, con
     }
 
     beams[i + j*NUM_VIEWS] = 10 * log10(beamstrength);
-
-    /*int numBlocks = 1;
-    dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
-    if (i == 0 && j == 0)
-    {
-        // sum the components of the NUM_VIEWS * NUM_VIEWS beams
-        calcBeamStrength<<<numBlocks, threadsPerBlock >>>(summedSignals, i, j, beams);
-    }*/
-
-    //calcBeamStrength<<<1, 1>>>(summedSignals, i, j, beams);
-    /*int idx;
-    float beamstrength = 0.0f;
-    for (int q = 0; q < FRAMES_PER_HALFBUFFER; ++q)
-    {
-        idx = q + (i + j * NUM_VIEWS) * FRAMES_PER_HALFBUFFER;
-        //summedSignals[idx] /= 16;
-        //summedSignals[idx] = summedSignals[idx] * summedSignals[idx] / FRAMES_PER_HALFBUFFER;
-        beamstrength += summedSignals[idx];
-    }
-    beams[i + j*NUM_VIEWS] = 10 * log10(beamstrength);*/
-
-    // normalize and calculate "strength" of beam
-    /*for (int k = 0; k < FRAMES_PER_HALFBUFFER; k++) // this is no longer correct
-    {
-        summedSignals[k] /= NUM_CHANNELS;
-        summedSignals[k] = summedSignals[k] * summedSignals[k] / FRAMES_PER_HALFBUFFER;
-        beamStrength += summedSignals[k];
-    }*/
-
-    //beams[i + j * NUM_VIEWS] = i*10.0f + j*1200.0f;
-    //beams[i + j*NUM_VIEWS] = 10 * log10(beamStrength);
 }
-
-// Callback data, persisted between calls. Allows us to access the data it
-// contains from within the callback function.
-//static paTestData* data;
 
 // Checks the return value of a PortAudio function. Logs the message and exits
 // if there was an error
@@ -165,12 +96,26 @@ static int streamCallback(
     cudaMemcpy(data->buffer, in, FRAMES_PER_HALFBUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
 
     // beamform
-    int numBlocks = 1;
-    dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
+    int numBlocks;
+    dim3 threadsPerBlock;
+    if (NUM_VIEWS * NUM_VIEWS > MAX_THREADS_PER_BLOCK)
+    {
+        numBlocks = (NUM_VIEWS * NUM_VIEWS) % MAX_THREADS_PER_BLOCK;
+        threadsPerBlock = dim3(MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+    }
+    else
+    {
+        numBlocks = 1;
+        threadsPerBlock = dim3(NUM_VIEWS, NUM_VIEWS);
+    }
+    
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
+
     beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta, data->summedSignals);
     cudaDeviceSynchronize();
+
+
     end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;
@@ -288,7 +233,7 @@ int main()
         &inputParameters,
         NULL,
         SAMPLE_RATE,
-        FRAMES_PER_HALFBUFFER,//*2,
+        FRAMES_PER_HALFBUFFER*2,
         paNoFlag,
         streamCallback,
         data
@@ -299,55 +244,13 @@ int main()
     err = Pa_StartStream(stream);
     checkErr(err);
 
-    FILE* signal = popen("gnuplot", "w"); 
-
-    /*fprintf(signal, "plot '-' matrix with image\n");
-    for (int i = 0; i < 5; i++){
-        for (int j = 0; j < 5; ++j)
-        {
-            fprintf(signal, "%d ", j);
-        }
-        fprintf(signal, "\n");
-    }
-    fprintf(signal, "e\n");
-    fprintf(signal, "e\n");
-    fflush(signal);    */
-
-    // Display the buffered changes to stdout in the terminal
-    fflush(stdout);
-
-    /*int ncols = NUM_VIEWS;
-    int nrows = NUM_VIEWS;
-    std::vector<std::vector<float>> z;
-    for (int j = 0; j < nrows; ++j)
-    {
-        std::vector<float> z_row;
-        for (int i = 0; i < ncols; ++i)
-        {
-            z_row.push_back(1);
-        }
-        z.push_back(z_row);
-    }   
-
-    plt::figure(2);
-    plt::figure_size(NUM_VIEWS, NUM_VIEWS);
-    plt::title("Beamforming intensity");
-    //plt::clf();
-    plt::imshow(z);
-    plt::xlim(MIN_VIEW, MAX_VIEW);
-    plt::ylim(MIN_VIEW, MAX_VIEW);
-    plt::xlabel("theta");
-    plt::xlabel("phi");*/
-    //plt::pause(0.15); 
-
-    //int random;
-    //srand(time(NULL));
+    FILE* signal = popen("gnuplot", "w");    
 
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
     {
         //Pa_Sleep(100);
         // plot maximum direction
-        /*plt::figure(1);
+        plt::figure(1);
         plt::title("Max direction plot");
         plt::clf();
         plt::scatter(std::vector<float>{theta[data->thetaID] * 180.0f / (float)M_PI}, std::vector<float>{phi[data->phiID] * 180.0f / (float)M_PI}, 25.0, {{"color", "red"}});
@@ -356,7 +259,7 @@ int main()
         plt::xlabel("theta");
         plt::xlabel("phi");
         plt::grid(true);
-        plt::pause(0.15);*/
+        plt::pause(0.15);
         //printf("theta = %f\n", data->theta );
         //printf("phi = %f\n", data->phi );
         //printf("maxframeindex = %d\n", data->maxFrameIndex );
@@ -386,9 +289,7 @@ int main()
 
         // Display the buffered changes to stdout in the terminal
         fflush(stdout);
-    }    
-
-
+    }
 
     // Stop capturing audio
     err = Pa_StopStream(stream);
@@ -402,6 +303,7 @@ int main()
     err = Pa_Terminate();
     checkErr(err);
 
+    // free allocated memory
     cudaFree(data->buffer);
     cudaFree(data->gpubeams);
     cudaFree(data->theta);

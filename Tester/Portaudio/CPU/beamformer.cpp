@@ -5,6 +5,9 @@
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
 
+#include <chrono>
+#include <ctime>
+
 // Callback data, persisted between calls. Allows us to access the data it
 // contains from within the callback function.
 //static paTestData* data;
@@ -51,8 +54,17 @@ static int streamCallback(
 
     data->frameIndex += framesToCalc;
 
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    start = std::chrono::system_clock::now();
+
     // beamform
     beamforming(in, theta, phi);
+
+    end = std::chrono::system_clock::now();
+
+    std::chrono::duration<double> elapsed = end-start;
+
+    std::cout << "elapsed: " << elapsed.count() << "s\n";
 
     // find strongest beam    
     auto it = max_element(beams.begin(), beams.end());

@@ -8,7 +8,7 @@
 #include <portaudio.h> // PortAudio: Used for audio capture
 
 #define SAMPLE_RATE (44100.0)   // How many audio samples to capture every second (44100 Hz is standard)
-#define FRAMES_PER_HALFBUFFER (2048) // Half of how many audio samples to send to our callback function for each channel
+#define FRAMES_PER_HALFBUFFER (1024) // Half of how many audio samples to send to our callback function for each channel
 #define NUM_CHANNELS (16)        // Number of audio channels to capture
 #define NUM_SECONDS (10)
 #define DEVICE_NAME "UMA16v2: USB Audio (hw:2,0)"
@@ -23,6 +23,9 @@
 
 #define C (340.0) // m/s
 #define ARRAY_DIST (0.042) // m
+
+#define MAX_BLOCK_SIZE (32)
+#define MAX_THREADS_PER_BLOCK (1024)
 
 // Define our callback data (data that is passed to every callback function call)
 typedef struct {
