@@ -3,6 +3,9 @@
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
 
+#include <chrono>
+#include <ctime>
+
 __global__ 
 void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, float* ya, float* za)
 {
@@ -99,7 +102,18 @@ static int streamCallback(
     // beamform
     int numBlocks = 1;
     dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    start = std::chrono::system_clock::now();
     beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->ya, data->za);
+
+
+    //beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta, data->summedSignals);
+    cudaDeviceSynchronize();
+    end = std::chrono::system_clock::now();
+
+    std::chrono::duration<double> elapsed = end-start;
+
+    std::cout << "elapsed: " << elapsed.count() << "s\n";
 
     cudaMemcpy(data->cpubeams, data->gpubeams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
 

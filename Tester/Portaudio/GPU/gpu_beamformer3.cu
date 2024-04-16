@@ -3,6 +3,9 @@
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
 
+#include <chrono>
+#include <ctime>
+
 __global__
 void interpolateChannels(const float* inputBuffer, float* summedSignals, const int i, const int j, const int* a, const int* b, const float* alpha, const float* beta)
 {
@@ -36,12 +39,14 @@ __global__ void normalize(float* summedSignals, const int i, const int j)
 
 __global__ void calcBeamStrength(float* summedSignals, const int i, const int j, float* beams)
 {
+    //int m = threadIdx.x;
+    //int n = threadIdx.y;
+    beams[i + j*NUM_VIEWS] = 0.0f;
     int id = (i + j*NUM_VIEWS) * FRAMES_PER_HALFBUFFER;
     for (int q = 0; q < FRAMES_PER_HALFBUFFER; ++q)
     {
         beams[i + j*NUM_VIEWS] += summedSignals[id + q];
-    }
-
+    }    
     beams[i + j*NUM_VIEWS] = 10 * log10(beams[i + j*NUM_VIEWS]);
 }
 
@@ -63,17 +68,41 @@ void beamforming(const float* inputBuffer, float* beams, const float* theta, con
     //syncthreads();
     
     // normalize each signal component
-    normalize<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(summedSignals, i, j);
-    cudaDeviceSynchronize();
+    //normalize<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(summedSignals, i, j);
+    //cudaDeviceSynchronize();
 
-    int numBlocks = 1;
+    int idx;
+    float beamstrength = 0.0f;
+    // normalize
+    for (int q = 0; q < FRAMES_PER_HALFBUFFER; ++q)
+    {
+        idx = q + (i + j * NUM_VIEWS) * FRAMES_PER_HALFBUFFER;
+        summedSignals[idx] /= NUM_CHANNELS;
+        summedSignals[idx] = summedSignals[idx] * summedSignals[idx] / FRAMES_PER_HALFBUFFER;
+        beamstrength += summedSignals[idx];
+    }
+
+    beams[i + j*NUM_VIEWS] = 10 * log10(beamstrength);
+
+    /*int numBlocks = 1;
     dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
     if (i == 0 && j == 0)
     {
         // sum the components of the NUM_VIEWS * NUM_VIEWS beams
         calcBeamStrength<<<numBlocks, threadsPerBlock >>>(summedSignals, i, j, beams);
+    }*/
+
+    //calcBeamStrength<<<1, 1>>>(summedSignals, i, j, beams);
+    /*int idx;
+    float beamstrength = 0.0f;
+    for (int q = 0; q < FRAMES_PER_HALFBUFFER; ++q)
+    {
+        idx = q + (i + j * NUM_VIEWS) * FRAMES_PER_HALFBUFFER;
+        //summedSignals[idx] /= 16;
+        //summedSignals[idx] = summedSignals[idx] * summedSignals[idx] / FRAMES_PER_HALFBUFFER;
+        beamstrength += summedSignals[idx];
     }
-    
+    beams[i + j*NUM_VIEWS] = 10 * log10(beamstrength);*/
 
     // normalize and calculate "strength" of beam
     /*for (int k = 0; k < FRAMES_PER_HALFBUFFER; k++) // this is no longer correct
@@ -135,8 +164,15 @@ static int streamCallback(
     // beamform
     int numBlocks = 1;
     dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    start = std::chrono::system_clock::now();
     beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta, data->summedSignals);
     cudaDeviceSynchronize();
+    end = std::chrono::system_clock::now();
+
+    std::chrono::duration<double> elapsed = end-start;
+
+    std::cout << "elapsed: " << elapsed.count() << "s\n";
 
     cudaMemcpy(data->cpubeams, data->gpubeams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -249,7 +285,7 @@ int main()
         &inputParameters,
         NULL,
         SAMPLE_RATE,
-        FRAMES_PER_HALFBUFFER*2,
+        FRAMES_PER_HALFBUFFER,//*2,
         paNoFlag,
         streamCallback,
         data
