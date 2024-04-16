@@ -150,7 +150,7 @@ int main()
 
     paTestData* data = (paTestData*)malloc(sizeof(paTestData));
     data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
-    data->frameIndex = 0;    
+    data->frameIndex = 0;
 
     // Open the PortAudio stream
     PaStream* stream;
@@ -186,7 +186,7 @@ int main()
         printf("maxframeindex = %d\n", data->maxFrameIndex );
         printf("frameindex = %d\n", data->frameIndex );
         fflush(stdout);
-    }    
+    }
 
     // Stop capturing audio
     err = Pa_StopStream(stream);

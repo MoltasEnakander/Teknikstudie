@@ -11,7 +11,7 @@
 
 #define SAMPLE_RATE (44100.0)   // How many audio samples to capture every second (44100 Hz is standard)
 #define FRAMES_PER_BUFFER (2048) // How many audio samples to send to our callback function for each channel
-#define NUM_SECONDS (5)          
+#define NUM_SECONDS (5)
 #define NUM_CHANNELS (16)        // Number of audio channels to capture
 #define DEVICE_NAME "UMA16v2: USB Audio (hw:2,0)"
 
@@ -25,9 +25,6 @@
 
 #define C (340.0) // m/s
 #define ARRAY_DIST (0.042) // m
-
-#define WINDOW_WIDTH (640)
-#define WINDOW_HEIGHT (480)
 
 // Define our callback data (data that is passed to every callback function call)
 typedef struct {

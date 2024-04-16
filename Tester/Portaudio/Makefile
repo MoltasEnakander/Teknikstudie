@@ -10,6 +10,10 @@ EXEC5 = plot_signal2
 
 EXEC6 = gpu_beamformer
 
+EXEC7 = gpu_beamformer2
+
+EXEC8 = gpu_beamformer3
+
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
 		-lrt -lasound -ljack -pthread -I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 #-I./lib/fftw-3.3.10/api -lfftw3 \
 		-lsfml-graphics -lsfml-window -lsfml-system	-I /usr/include/python3.8/ -lpython3.8
@@ -30,7 +34,16 @@ $(EXEC5): plot_signal2.cpp
 	g++ -o build/$@ $^ $(CLIB)
 
 $(EXEC6): GPU/gpu_beamformer.cu
-	nvcc -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack
+	nvcc -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
+			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8
+
+$(EXEC7): GPU/gpu_beamformer2.cu
+	nvcc -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
+			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8
+
+$(EXEC8): GPU/gpu_beamformer3.cu
+	nvcc -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
+			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8
 
 install-deps: install-portaudio install-fftw
 .PHONY: install-deps

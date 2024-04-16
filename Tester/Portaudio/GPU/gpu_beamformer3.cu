@@ -1,7 +1,34 @@
-#include "gpu_beamformer.h"
+#include "gpu_beamformer2.h"
 
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
+
+__global__
+int interpolateChannels()
+{
+    int k = 0;
+    delay = -(ya[k] * sinf(theta[i]) * cosf(phi[j]) + za[k] * sinf(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
+
+    // whole samples and fractions of samples
+    a = floor(delay);
+    b = a + 1;
+    alpha = b - delay;
+    beta = 1 - alpha;
+
+    // interpolation of left sample
+    for (l = max(-a, 0); l < min(FRAMES_PER_HALFBUFFER-a, FRAMES_PER_HALFBUFFER); l++)
+    {
+        summedSignals[l] += alpha * inputBuffer[(l+a)*NUM_CHANNELS + k];
+    }
+
+    // interpolation of right sample
+    for (l = max(-b, 0); l < min(FRAMES_PER_HALFBUFFER-b, FRAMES_PER_HALFBUFFER); l++)
+    {   
+        summedSignals[l] += beta * inputBuffer[(l+b)*NUM_CHANNELS + k];
+    }
+
+    return 0; // CORRECT THIS & RETURN TYPE
+}
 
 __global__ 
 void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, float* ya, float* za)
@@ -14,36 +41,17 @@ void beamforming(float* inputBuffer, float* beams, float* theta, float* phi, flo
     float alpha, beta, beamStrength;
     float delay;
     
-    float summedSignals[FRAMES_PER_BUFFER];
+    float summedSignals[FRAMES_PER_HALFBUFFER];
     beamStrength = 0;
-    for (k = 0; k < NUM_CHANNELS; k++) // loop channels
-    {                
-        delay = -(ya[k] * sinf(theta[i]) * cosf(phi[j]) + za[k] * sinf(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
 
-        // whole samples and fractions of samples
-        a = floor(delay);
-        b = a + 1;
-        alpha = b - delay;
-        beta = 1 - alpha;
+    // interpolate channels
+    interpolateChannels<<<1, 16>>>(); // CORRECT THIS
 
-        // interpolation of left sample
-        for (l = max(-a, 0); l < min(FRAMES_PER_BUFFER-a, FRAMES_PER_BUFFER); l++)
-        {
-            summedSignals[l] += alpha * inputBuffer[(l+a)*NUM_CHANNELS + k];
-        }
-
-        // interpolation of right sample
-        for (l = max(-b, 0); l < min(FRAMES_PER_BUFFER-b, FRAMES_PER_BUFFER); l++)
-        {   
-            summedSignals[l] += beta * inputBuffer[(l+b)*NUM_CHANNELS + k];
-        }
-    }
-    
     // normalize and calculate "strength" of beam
-    for (k = 0; k < FRAMES_PER_BUFFER; k++)
+    for (k = 0; k < FRAMES_PER_HALFBUFFER; k++)
     {
         summedSignals[k] /= NUM_CHANNELS;
-        summedSignals[k] = summedSignals[k] * summedSignals[k] / FRAMES_PER_BUFFER;
+        summedSignals[k] = summedSignals[k] * summedSignals[k] / FRAMES_PER_HALFBUFFER;
         beamStrength += summedSignals[k];
     }
 
@@ -65,10 +73,10 @@ static void checkErr(PaError err) {
 }
 
 // PortAudio stream callback function. Will be called after every
-// `FRAMES_PER_BUFFER` audio samples PortAudio captures. Used to process the
+// `2*FRAMES_PER_HALFBUFFER` audio samples PortAudio captures. Used to process the
 // resulting audio sample.
 static int streamCallback(
-    const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer,
+    const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer, // framesPerBuffer = 2 * FRAMES_PER_HALFBUFFER
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
 ) {
@@ -94,7 +102,7 @@ static int streamCallback(
         finished = paContinue;
     }    
 
-    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
+    cudaMemcpy(data->buffer, in, FRAMES_PER_HALFBUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
 
     // beamform
     int numBlocks = 1;
@@ -193,7 +201,7 @@ int main()
     data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
     data->frameIndex = 0;
 
-    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
+    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_HALFBUFFER * NUM_CHANNELS);
     cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
     cudaMalloc(&(data->theta), sizeof(float) * NUM_VIEWS);
     cudaMalloc(&(data->phi), sizeof(float) * NUM_VIEWS);
@@ -214,7 +222,7 @@ int main()
         &inputParameters,
         NULL,
         SAMPLE_RATE,
-        FRAMES_PER_BUFFER,
+        FRAMES_PER_HALFBUFFER*2,
         paNoFlag,
         streamCallback,
         data
@@ -238,8 +246,8 @@ int main()
         plt::pause(0.15);
         //printf("theta = %f\n", data->theta );
         //printf("phi = %f\n", data->phi );
-        printf("maxframeindex = %d\n", data->maxFrameIndex );
-        printf("frameindex = %d\n", data->frameIndex );
+        //printf("maxframeindex = %d\n", data->maxFrameIndex );
+        //printf("frameindex = %d\n", data->frameIndex );
         //fflush(stdout);
     }    
 
