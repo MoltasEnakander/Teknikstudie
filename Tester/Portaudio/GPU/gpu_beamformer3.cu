@@ -31,7 +31,7 @@ void interpolateChannels(const float* inputBuffer, float* summedSignals, const i
 }
 
 __global__ 
-void beamforming(const float* inputBuffer, float* beams, const float* theta, const float* phi, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals)
+void beamforming(const float* inputBuffer, float* beams, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals)
 {    
     int i = threadIdx.x; // theta idx
     int j = threadIdx.y; // phi idx   
@@ -100,7 +100,7 @@ static int streamCallback(
     dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta, data->summedSignals);
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals);
     cudaDeviceSynchronize();
     end = std::chrono::system_clock::now();
 
@@ -194,17 +194,13 @@ int main()
     data->frameIndex = 0;
 
     cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_HALFBUFFER * NUM_CHANNELS);
-    cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);    
-    cudaMalloc(&(data->theta), sizeof(float) * NUM_VIEWS);
-    cudaMalloc(&(data->phi), sizeof(float) * NUM_VIEWS);
+    cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);        
     cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->alpha), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->summedSignals), sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES_PER_HALFBUFFER);
     
-    cudaMemcpy(data->theta, theta, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy theta to GPU memory
-    cudaMemcpy(data->phi, phi, NUM_VIEWS*sizeof(float), cudaMemcpyHostToDevice); // copy phi to GPU memory   
     cudaMemcpy(data->a, a, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->alpha, alpha, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
@@ -243,7 +239,7 @@ int main()
         plt::xlim(MIN_VIEW, MAX_VIEW);
         plt::ylim(MIN_VIEW, MAX_VIEW);
         plt::xlabel("theta");
-        plt::xlabel("phi");
+        plt::ylabel("phi");
         plt::grid(true);
         plt::pause(0.15);
         //printf("theta = %f\n", data->theta );

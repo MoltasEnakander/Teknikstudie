@@ -34,9 +34,7 @@ typedef struct {
     int* a;
     int* b;
     float* alpha;
-    float* beta;
-    float* theta;
-    float* phi;    
+    float* beta;  
     int thetaID;
     int phiID;
     float* summedSignals;

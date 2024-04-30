@@ -8,14 +8,14 @@
 #include <portaudio.h> // PortAudio: Used for audio capture
 
 #define SAMPLE_RATE (44100.0)   // How many audio samples to capture every second (44100 Hz is standard)
-#define FRAMES_PER_BUFFER (2048) // How many audio samples to send to our callback function for each channel
+#define FRAMES_PER_HALFBUFFER (1024) // Half of how many audio samples to send to our callback function for each channel
 #define NUM_CHANNELS (16)        // Number of audio channels to capture
-#define NUM_SECONDS (15)
+#define NUM_SECONDS (10)
 #define DEVICE_NAME "UMA16v2: USB Audio (hw:2,0)"
 
 #define MIN_VIEW (-60)
 #define MAX_VIEW (60)
-#define VIEW_INTERVAL (10)
+#define VIEW_INTERVAL (5)
 #define NUM_VIEWS ((MAX_VIEW - MIN_VIEW) / VIEW_INTERVAL + 1)
 
 #define sind(x) (sin(fmod((x),360) * M_PI / 180))
@@ -30,15 +30,14 @@ typedef struct {
     int frameIndex;
     float* buffer;
     float* gpubeams;
-    float* cpubeams;
+    float* cpubeams;    
     int* a;
     int* b;
     float* alpha;
-    float* beta;
-    float* theta;
-    float* phi;
+    float* beta;    
     int thetaID;
     int phiID;
+    float* summedSignals;
 } paTestData;
 
 // positions in the microphone array
@@ -58,14 +57,13 @@ float* linspace(int a, int num)
     }
     return f;
 }
-
 static float* theta = linspace(MIN_VIEW, NUM_VIEWS);
 static float* phi = linspace(MIN_VIEW, NUM_VIEWS);
 
 float* calcDelays()
 {
     float* d = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
-    for (int i = 0; i < NUM_VIEWS; ++i)
+    /*for (int i = 0; i < NUM_VIEWS; ++i)
     {
         for (int j = 0; j < NUM_VIEWS; ++j)
         {
@@ -73,6 +71,19 @@ float* calcDelays()
             {                
                 d[k + j*NUM_CHANNELS + i*NUM_CHANNELS*NUM_VIEWS] = -(ya[k] * sinf(theta[i]) * cosf(phi[j]) + za[k] * sinf(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
             }
+        }
+    }*/
+
+    int pid = 0;
+    int tid = 0;
+    for (int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i){
+        for (int k = 0; k < NUM_CHANNELS; ++k){
+            d[k + i * NUM_CHANNELS] = -(ya[k] * sinf(theta[tid]) * cosf(phi[pid]) + za[k] * sinf(phi[pid])) * ARRAY_DIST / C * SAMPLE_RATE;
+        }
+        tid++;
+        if (tid >= NUM_VIEWS){
+            tid = 0;
+            pid++;
         }
     }
     return d;
