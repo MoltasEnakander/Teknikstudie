@@ -24,9 +24,6 @@
 #define C (340.0) // m/s
 #define ARRAY_DIST (0.042) // m
 
-#define MAX_BLOCK_SIZE (32)
-#define MAX_THREADS_PER_BLOCK (1024)
-
 // Define our callback data (data that is passed to every callback function call)
 typedef struct {
     int maxFrameIndex;

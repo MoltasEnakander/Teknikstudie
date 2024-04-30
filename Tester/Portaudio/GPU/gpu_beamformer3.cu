@@ -96,26 +96,12 @@ static int streamCallback(
     cudaMemcpy(data->buffer, in, FRAMES_PER_HALFBUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
 
     // beamform
-    int numBlocks;
-    dim3 threadsPerBlock;
-    if (NUM_VIEWS * NUM_VIEWS > MAX_THREADS_PER_BLOCK)
-    {
-        numBlocks = (NUM_VIEWS * NUM_VIEWS) % MAX_THREADS_PER_BLOCK;
-        threadsPerBlock = dim3(MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
-    }
-    else
-    {
-        numBlocks = 1;
-        threadsPerBlock = dim3(NUM_VIEWS, NUM_VIEWS);
-    }
-    
+    int numBlocks = 1;
+    dim3 threadsPerBlock(NUM_VIEWS, NUM_VIEWS);
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
-
     beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->theta, data->phi, data->a, data->b, data->alpha, data->beta, data->summedSignals);
     cudaDeviceSynchronize();
-
-
     end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;
