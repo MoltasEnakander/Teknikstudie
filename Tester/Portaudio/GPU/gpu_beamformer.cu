@@ -31,9 +31,13 @@ void interpolateChannels(const float* inputBuffer, float* summedSignals, const i
 }
 
 __global__ 
-void beamforming(const float* inputBuffer, float* beams, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals/*, float* ya, float* za, float* theta, float* phi*/)
+void beamforming(const float* inputBuffer, float* beams, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals, const int blockid)
 {    
-    int i = threadIdx.x; // theta idx    
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i >= NUM_VIEWS * NUM_VIEWS){
+        return;
+    }
 
     // interpolate channels
     interpolateChannels<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(inputBuffer, summedSignals, i, a, b, alpha, beta);
@@ -95,11 +99,19 @@ static int streamCallback(
     cudaMemcpy(data->buffer, in, FRAMES_PER_HALFBUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
 
     // beamform
-    int numBlocks = 1;
-    dim3 threadsPerBlock(NUM_VIEWS * NUM_VIEWS);
+    int numBlocks;
+    dim3 threadsPerBlock;
+    if (NUM_VIEWS * NUM_VIEWS > MAX_THREADS_PER_BLOCK){
+        numBlocks = (NUM_VIEWS * NUM_VIEWS) % MAX_THREADS_PER_BLOCK + 1;
+        threadsPerBlock = dim3(MAX_THREADS_PER_BLOCK);
+    }
+    else{
+        numBlocks = 1;
+        threadsPerBlock = dim3(NUM_VIEWS * NUM_VIEWS);
+    }
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals/*, data->ya, data->za, data->theta, data->phi*/);
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals, numBlocks);
     cudaDeviceSynchronize();
     end = std::chrono::system_clock::now();
 

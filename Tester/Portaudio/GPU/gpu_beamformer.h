@@ -18,6 +18,8 @@
 #define VIEW_INTERVAL (5)
 #define NUM_VIEWS ((MAX_VIEW - MIN_VIEW) / VIEW_INTERVAL + 1)
 
+#define MAX_THREADS_PER_BLOCK (1024)
+
 #define sind(x) (sin(fmod((x),360) * M_PI / 180))
 #define cosd(x) (cos(fmod((x),360) * M_PI / 180))
 
