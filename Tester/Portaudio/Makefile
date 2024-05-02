@@ -14,6 +14,8 @@ EXEC7 = gpu_beamformer2
 
 EXEC8 = gpu_beamformer3
 
+EXEC9 = myprogram
+
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
 		-lrt -lasound -ljack -pthread -I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 #-I./lib/fftw-3.3.10/api -lfftw3 \
 		-lsfml-graphics -lsfml-window -lsfml-system	-I /usr/include/python3.8/ -lpython3.8
@@ -35,7 +37,7 @@ $(EXEC5): plot_signal2.cpp
 
 $(EXEC6): GPU/gpu_beamformer.cu
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
-			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt
+			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt	
 
 $(EXEC7): GPU/gpu_beamformer2.cu
 	nvcc -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
@@ -44,6 +46,11 @@ $(EXEC7): GPU/gpu_beamformer2.cu
 $(EXEC8): GPU/gpu_beamformer3.cu
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt
+
+$(EXEC9): GPU/main.cpp GPU/gpu_beamformer.cu
+	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
+			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt -I./lib/AudioFile/include
+
 
 install-deps: install-portaudio install-fftw
 .PHONY: install-deps

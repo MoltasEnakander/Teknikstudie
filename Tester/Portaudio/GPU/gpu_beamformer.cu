@@ -11,18 +11,18 @@ void interpolateChannels(const float* inputBuffer, float* summedSignals, const i
 {
     int id;
     int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index of this thread
-    int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * FRAMES_PER_HALFBUFFER; // global index of this thread
+    int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * FRAMES_PER_BUFFER; // global index of this thread
     for (int k = 0; k < NUM_CHANNELS; ++k)
     {
         id = k + i * NUM_CHANNELS;
-        if (l1 < FRAMES_PER_HALFBUFFER)
+        if (l1 < FRAMES_PER_BUFFER)
         {
-            if (max(0, -a[id]) == 0 && l1 < FRAMES_PER_HALFBUFFER - a[id]) // a >= 0
+            if (max(0, -a[id]) == 0 && l1 < FRAMES_PER_BUFFER - a[id]) // a >= 0
                 summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the a[id] end positions
             else if (max(0, -a[id]) > 0 && l1 >= a[id]) 
                 summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the first a[id]-1 positions
 
-            if (max(0, -b[id]) == 0 && l1 < FRAMES_PER_HALFBUFFER - b[id]) // b >= 0
+            if (max(0, -b[id]) == 0 && l1 < FRAMES_PER_BUFFER - b[id]) // b >= 0
                 summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the b[id] end positions
             else if (max(0, -b[id]) > 0 && l1 >= b[id]) 
                 summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the first b[id]-1 positions
@@ -40,17 +40,17 @@ void beamforming(const float* inputBuffer, float* beams, const int* a, const int
     }
 
     // interpolate channels
-    interpolateChannels<<<(FRAMES_PER_HALFBUFFER+255)/256, 256>>>(inputBuffer, summedSignals, i, a, b, alpha, beta);
+    interpolateChannels<<<(FRAMES_PER_BUFFER+255)/256, 256>>>(inputBuffer, summedSignals, i, a, b, alpha, beta);
     cudaDeviceSynchronize();
 
     int idx;
     float beamstrength = 0.0f;
     // normalize
-    for (int q = 0; q < FRAMES_PER_HALFBUFFER; ++q)
+    for (int q = 0; q < FRAMES_PER_BUFFER; ++q)
     {
-        idx = q + i * FRAMES_PER_HALFBUFFER;
+        idx = q + i * FRAMES_PER_BUFFER;
         summedSignals[idx] /= NUM_CHANNELS;
-        summedSignals[idx] = summedSignals[idx] * summedSignals[idx] / FRAMES_PER_HALFBUFFER;
+        summedSignals[idx] = summedSignals[idx] * summedSignals[idx] / FRAMES_PER_BUFFER;
         beamstrength += summedSignals[idx];
     }
 
@@ -67,10 +67,10 @@ static void checkErr(PaError err) {
 }
 
 // PortAudio stream callback function. Will be called after every
-// `2*FRAMES_PER_HALFBUFFER` audio samples PortAudio captures. Used to process the
+// `2*FRAMES_PER_BUFFER` audio samples PortAudio captures. Used to process the
 // resulting audio sample.
 static int streamCallback(
-    const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer, // framesPerBuffer = 2 * FRAMES_PER_HALFBUFFER
+    const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer, // framesPerBuffer = 2 * FRAMES_PER_BUFFER
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
 ) {
@@ -96,7 +96,7 @@ static int streamCallback(
         finished = paContinue;
     }    
 
-    cudaMemcpy(data->buffer, in, FRAMES_PER_HALFBUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
+    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
 
     // beamform
     int numBlocks;
@@ -139,7 +139,7 @@ static int streamCallback(
     return finished;
 }
 
-int main() 
+void listen_live() 
 {
     // Initialize PortAudio
     PaError err;
@@ -189,7 +189,15 @@ int main()
     printf("Device = %d\n", device);
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
-    // --------------------------------------------------------------------------------------------------------------    
+    // --------------------------------------------------------------------------------------------------------------
+
+    theta = linspace(MIN_VIEW, NUM_VIEWS);
+    phi = linspace(MIN_VIEW, NUM_VIEWS);
+    delay = calcDelays();
+    a = calca();
+    b = calcb();
+    alpha = calcalpha();
+    beta = calcbeta();
 
     // Define stream capture specifications
     PaStreamParameters inputParameters;
@@ -204,13 +212,13 @@ int main()
     data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
     data->frameIndex = 0;
 
-    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_HALFBUFFER * NUM_CHANNELS);
+    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
     cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
     cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->alpha), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->summedSignals), sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES_PER_HALFBUFFER);    
+    cudaMalloc(&(data->summedSignals), sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES_PER_BUFFER);    
     
     cudaMemcpy(data->a, a, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
@@ -226,7 +234,7 @@ int main()
         &inputParameters,
         NULL,
         SAMPLE_RATE,
-        FRAMES_PER_HALFBUFFER*2,
+        FRAMES_PER_BUFFER*2,
         paNoFlag,
         streamCallback,
         data
@@ -313,5 +321,82 @@ int main()
 
     printf("\n");    
 
-    return EXIT_SUCCESS;
+    //return EXIT_SUCCESS;
+}
+
+/////////////////////////////////////////////////////////////
+/////////////////// UTILITY FUNCTIONS ///////////////////////
+/////////////////////////////////////////////////////////////
+
+float* linspace(int a, int num)
+{
+    // create a vector of length num
+    //std::vector<double> v(NUM_VIEWS, 0);    
+    float* f = (float*)malloc(NUM_VIEWS*sizeof(float));
+             
+    // now assign the values to the vector
+    for (int i = 0; i < num; i++)
+    {
+        f[i] = (a + i * VIEW_INTERVAL) * M_PI / 180.0f;
+    }
+    return f;
+}
+
+float* calcDelays()
+{
+    float* d = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));   
+
+    int pid = 0;
+    int tid = 0;
+    for (int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i){
+        for (int k = 0; k < NUM_CHANNELS; ++k){
+            d[k + i * NUM_CHANNELS] = -(ya[k] * sinf(theta[tid]) * cosf(phi[pid]) + za[k] * sinf(phi[pid])) * ARRAY_DIST / C * SAMPLE_RATE;
+        }
+        tid++;
+        if (tid >= NUM_VIEWS){
+            tid = 0;
+            pid++;
+        }
+    }
+    return d;
+}
+
+int* calca()
+{
+    int* a = (int*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int));
+    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
+    {
+        a[i] = floor(delay[i]);
+    }
+    return a;
+}
+
+int* calcb()
+{
+    int* b = (int*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int));
+    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
+    {
+        b[i] = a[i] + 1;
+    }
+    return b;
+}
+
+float* calcalpha()
+{
+    float* alpha = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
+    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
+    {
+        alpha[i] = b[i] - delay[i];
+    }
+    return alpha;
+}
+
+float* calcbeta()
+{
+    float* beta = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
+    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
+    {
+        beta[i] = 1 - alpha[i];
+    }
+    return beta;
 }
