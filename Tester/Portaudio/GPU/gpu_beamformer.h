@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include <portaudio.h> // PortAudio: Used for audio capture
+#include "AudioFile.h"
 
 #define SAMPLE_RATE (44100.0)   // How many audio samples to capture every second (44100 Hz is standard)
 #define FRAMES_PER_BUFFER (1024) // Half of how many audio samples to send to our callback function for each channel
@@ -68,5 +69,7 @@ float* calcbeta();
 static float* beta = NULL;
 
 void listen_live();
+
+void listen_prerecorded(std::vector<AudioFile<float>>& files);
 
 #endif
