@@ -11,7 +11,7 @@
 #include "AudioFile.h"
 
 #define SAMPLE_RATE (44100.0)   // How many audio samples to capture every second (44100 Hz is standard)
-#define FRAMES_PER_BUFFER (1024) // Half of how many audio samples to send to our callback function for each channel
+#define FRAMES_PER_BUFFER (2048) // Half of how many audio samples to send to our callback function for each channel
 #define NUM_CHANNELS (16)        // Number of audio channels to capture
 #define NUM_SECONDS (10)
 #define DEVICE_NAME "UMA16v2: USB Audio (hw:2,0)"

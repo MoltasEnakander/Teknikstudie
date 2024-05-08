@@ -228,7 +228,7 @@ int main()
         &inputParameters,
         NULL,
         SAMPLE_RATE,
-        FRAMES_PER_HALFBUFFER*2,
+        FRAMES_PER_HALFBUFFER,
         paNoFlag,
         streamCallback,
         data

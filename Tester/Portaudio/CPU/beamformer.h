@@ -17,7 +17,7 @@
 
 #define MIN_VIEW (-60)
 #define MAX_VIEW (60)
-#define VIEW_INTERVAL (10)
+#define VIEW_INTERVAL (5)
 #define NUM_VIEWS ((MAX_VIEW - MIN_VIEW) / VIEW_INTERVAL + 1)
 
 #define sind(x) (sin(fmod((x),360) * M_PI / 180))

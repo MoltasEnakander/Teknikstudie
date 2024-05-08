@@ -8,17 +8,15 @@ namespace plt = matplotlibcpp;
 #include <unistd.h>
 
 __global__
-void interpolateChannels(const float* inputBuffer, float* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta, const bool prerecorded=false, const int frameindex=0)
+void interpolateChannels(const float* inputBuffer, float* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta)
 {
     int id;
     int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index of this thread
-    if (prerecorded)
-        l1 += frameindex;
     int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * FRAMES_PER_BUFFER; // global index of this thread
     for (int k = 0; k < NUM_CHANNELS; ++k)
     {
         id = k + i * NUM_CHANNELS;
-        if (l1 - frameindex < FRAMES_PER_BUFFER) 
+        if (true)
         {
             if (max(0, -a[id]) == 0 && l1 < FRAMES_PER_BUFFER - a[id]) // a >= 0
                 summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the a[id] end positions
@@ -34,7 +32,7 @@ void interpolateChannels(const float* inputBuffer, float* summedSignals, const i
 }
 
 __global__ 
-void beamforming(const float* inputBuffer, float* beams, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals, const int blockid, const bool prerecorded=false, const int frameindex=0)
+void beamforming(const float* inputBuffer, float* beams, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals)
 {    
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -42,7 +40,7 @@ void beamforming(const float* inputBuffer, float* beams, const int* a, const int
         return;
     }
 
-    // interpolate channels
+    // interpolate channels    
     interpolateChannels<<<(FRAMES_PER_BUFFER+255)/256, 256>>>(inputBuffer, summedSignals, i, a, b, alpha, beta);
     cudaDeviceSynchronize();
 
@@ -114,7 +112,7 @@ static int streamCallback(
     }
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals, numBlocks);
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals);
     cudaDeviceSynchronize();
     end = std::chrono::system_clock::now();
 
@@ -237,7 +235,7 @@ void listen_live()
         &inputParameters,
         NULL,
         SAMPLE_RATE,
-        FRAMES_PER_BUFFER*2,
+        FRAMES_PER_BUFFER,
         paNoFlag,
         streamCallback,
         data
@@ -332,7 +330,9 @@ void beamform_prerecorded(
 {
     unsigned long framesLeft = data->maxFrameIndex - data->frameIndex;
 
-    int frame = data->frameIndex;
+    printf("Frames left: %d\n", framesLeft);
+
+    //int frame = data->frameIndex;
 
     if( framesLeft < framesPerBuffer )
     {
@@ -354,7 +354,7 @@ void beamform_prerecorded(
         numBlocks = 1;
         threadsPerBlock = dim3(NUM_VIEWS * NUM_VIEWS);
     }
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals, numBlocks, true, frame);
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals);
     cudaDeviceSynchronize();
 
     cudaMemcpy(data->cpubeams, data->gpubeams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
@@ -378,17 +378,30 @@ void beamform_prerecorded(
 
 void listen_prerecorded(std::vector<AudioFile<float>>& files)
 {
-    int length = files[0].getNumSamplesPerChannel() * 16;
+    int length = files[0].getNumSamplesPerChannel() * NUM_CHANNELS;
+    int q = 1;
+    while (length == 0 && q < NUM_CHANNELS){ // some channels may be faulty and have 0 samples, make sure that length is longer than 0
+        printf("length: %d\n", length);
+        length = files[q].getNumSamplesPerChannel() * NUM_CHANNELS;
+        q++;
+    }
+    assert(length > 0); // if all channels are 0 samples long this will alert
+
     float* inputBuffer = (float*)malloc(length*sizeof(float));
+    float* cpyinputBuffer = inputBuffer;
 
     // build the inputbuffer
     int idx = 0;
     int idx2 = 0;
+    int channel = 0; // channel zero of each file, since each file is mono
     for (int i = 0; i < length; ++i)
     {
         idx = i % NUM_CHANNELS;
         idx2 = i / NUM_CHANNELS;
-        inputBuffer[i] = files[idx].samples[0][idx2];
+        if (files[idx].getNumSamplesPerChannel() > 0) // if sample exist, copy it
+            inputBuffer[i] = files[idx].samples[channel][idx2];
+        else
+            inputBuffer[i] = 0; // if the channel does not have any samples, fill with zero
     }
 
     theta = linspace(MIN_VIEW, NUM_VIEWS);
@@ -411,7 +424,7 @@ void listen_prerecorded(std::vector<AudioFile<float>>& files)
     cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->summedSignals), sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES_PER_BUFFER);    
     
-    cudaMemcpy(data->buffer, inputBuffer, length*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->buffer, cpyinputBuffer, length*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(data->a, a, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->alpha, alpha, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
@@ -419,7 +432,9 @@ void listen_prerecorded(std::vector<AudioFile<float>>& files)
     
     data->cpubeams = (float*)malloc(NUM_VIEWS*NUM_VIEWS*sizeof(float));
 
-    double duration = FRAMES_PER_BUFFER / files[0].getSampleRate();
+    double duration = (double)FRAMES_PER_BUFFER / (double)files[0].getSampleRate();
+    printf("duration: %f %d %d\n", duration, FRAMES_PER_BUFFER, files[0].getSampleRate());
+    assert(duration > 0); // TODO: make robust
 
     FILE* signal = popen("gnuplot", "w");
     std::chrono::time_point<std::chrono::system_clock> start, end;
@@ -429,6 +444,7 @@ void listen_prerecorded(std::vector<AudioFile<float>>& files)
         // do calculations and drawings
 
         beamform_prerecorded(FRAMES_PER_BUFFER, data);
+        data->buffer += FRAMES_PER_BUFFER*NUM_CHANNELS;
 
         plt::figure(1);
         plt::title("Max direction plot");
@@ -439,7 +455,7 @@ void listen_prerecorded(std::vector<AudioFile<float>>& files)
         plt::xlabel("theta");
         plt::ylabel("phi");
         plt::grid(true);
-        //plt::pause(0.15);
+        plt::pause(0.15);
 
         // plot beamforming results in color map
         fprintf(signal, "unset key\n");
@@ -468,7 +484,7 @@ void listen_prerecorded(std::vector<AudioFile<float>>& files)
 
         std::cout << "elapsed: " << elapsed.count() << "s\n";
 
-        sleep(duration - elapsed.count()); // sleep for some time so that the playback "appears" like real time
+        //sleep(duration - elapsed.count()); // sleep for some time so that the playback "appears" like real time
     }
 
     // free allocated memory

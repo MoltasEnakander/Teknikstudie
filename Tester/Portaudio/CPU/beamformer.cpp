@@ -239,7 +239,8 @@ void beamforming(const float* inputBuffer, const std::vector<double>& theta, con
             std::vector<double> summedSignals(FRAMES_PER_BUFFER, 0.0);
             beamStrength = 0;
             for (k = 0; k < NUM_CHANNELS; ++k) // loop channels
-            {                
+            {
+                
                 delay[k] = -(ya[k] * sind(theta[i]) * cosd(phi[j]) + za[k] * sind(phi[j])) * ARRAY_DIST / C * SAMPLE_RATE;
 
                 // whole samples and fractions of samples
@@ -251,7 +252,7 @@ void beamforming(const float* inputBuffer, const std::vector<double>& theta, con
                 // interpolation of left sample
                 for (l = std::max(-a, 0); l < std::min(FRAMES_PER_BUFFER-a, FRAMES_PER_BUFFER); l++)
                 {
-                    summedSignals[l] += alpha * inputBuffer[(l+a)*NUM_CHANNELS + k];
+                    summedSignals[l] += alpha * inputBuffer[(l+a)*NUM_CHANNELS + k];                    
                 }
 
                 // interpolation of right sample

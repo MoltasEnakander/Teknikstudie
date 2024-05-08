@@ -120,12 +120,12 @@ int main(int argc, char** argv)
 			}				
 		}
 
-		for (int i = 0; i < NUM_CHANNELS; ++i)
+		/*for (int i = 0; i < NUM_CHANNELS; ++i)
 		{
 			// make sure that all channels have the same amount of samples
 			assert(files[i].getNumSamplesPerChannel() > 0);
 			assert(files[0].getNumSamplesPerChannel() == files[i].getNumSamplesPerChannel());
-		}
+		}*/
 
 		closedir(dp);
 
