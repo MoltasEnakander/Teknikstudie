@@ -31,8 +31,7 @@ int main(int argc, char** argv)
 
 	if (useRecording) // use recorded signal
 	{
-		printf("Using previous recording!\n");
-		printf("%s\n", filepath);
+		printf("Using previous recording!\n");		
 
 		struct dirent *entry = nullptr;
 		DIR* dp = nullptr;

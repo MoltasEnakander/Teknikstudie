@@ -1,5 +1,6 @@
 #ifndef GPUBEAMFORMER_H
 #define GPUBEAMFORMER_H
+#define _USE_MATH_DEFINES
 #include <stdlib.h>
 #include <stdio.h>
 #include <cstring>
@@ -9,6 +10,7 @@
 
 #include <portaudio.h> // PortAudio: Used for audio capture
 #include "AudioFile.h"
+#include <cufft.h>
 
 #define SAMPLE_RATE (44100.0)   // How many audio samples to capture every second (44100 Hz is standard)
 #define FRAMES_PER_BUFFER (2048) // Half of how many audio samples to send to our callback function for each channel
@@ -34,6 +36,7 @@ typedef struct {
     int maxFrameIndex;
     int frameIndex;
     float* buffer;
+    float* ordbuffer; // ordered version of buffer ()
     float* gpubeams;
     float* cpubeams;    
     int* a;
@@ -43,7 +46,11 @@ typedef struct {
     int thetaID;
     int phiID;
     float* summedSignals;
-} paTestData;
+    cufftHandle plan1;
+    cufftHandle plan2; // to be deleted
+    cufftComplex *FFTdata1;
+    cufftComplex *FFTdata2; // to be deleted
+} beamformingData;
 
 // positions in the microphone array
 static float ya[16] = {-0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f};

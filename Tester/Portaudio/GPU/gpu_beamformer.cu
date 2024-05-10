@@ -15,19 +15,16 @@ void interpolateChannels(const float* inputBuffer, float* summedSignals, const i
     int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * FRAMES_PER_BUFFER; // global index of this thread
     for (int k = 0; k < NUM_CHANNELS; ++k)
     {
-        id = k + i * NUM_CHANNELS;
-        if (true)
-        {
-            if (max(0, -a[id]) == 0 && l1 < FRAMES_PER_BUFFER - a[id]) // a >= 0
-                summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the a[id] end positions
-            else if (max(0, -a[id]) > 0 && l1 >= a[id]) 
-                summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the first a[id]-1 positions
+        id = k + i * NUM_CHANNELS;        
+        if (max(0, -a[id]) == 0 && l1 < FRAMES_PER_BUFFER - a[id]) // a >= 0
+            summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the a[id] end positions
+        else if (max(0, -a[id]) > 0 && l1 >= a[id]) 
+            summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the first a[id]-1 positions
 
-            if (max(0, -b[id]) == 0 && l1 < FRAMES_PER_BUFFER - b[id]) // b >= 0
-                summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the b[id] end positions
-            else if (max(0, -b[id]) > 0 && l1 >= b[id]) 
-                summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the first b[id]-1 positions
-        }
+        if (max(0, -b[id]) == 0 && l1 < FRAMES_PER_BUFFER - b[id]) // b >= 0
+            summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the b[id] end positions
+        else if (max(0, -b[id]) > 0 && l1 >= b[id]) 
+            summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the first b[id]-1 positions        
     }
 }
 
@@ -81,7 +78,7 @@ static int streamCallback(
     // We will not be modifying the output buffer. This line is a no-op.
     (void)outputBuffer;
 
-    paTestData* data = (paTestData*)userData;
+    beamformingData* data = (beamformingData*)userData;
     
     int finished;
     unsigned long framesLeft = data->maxFrameIndex - data->frameIndex;
@@ -95,12 +92,24 @@ static int streamCallback(
     {
         data->frameIndex += framesPerBuffer;
         finished = paContinue;
-    }    
+    }
 
-    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
+    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory
+    cufftExecR2C(data->plan2, data->buffer, data->FFTdata2, CUFFT_FORWARD);
+    
+    for (int i = 0; i < NUM_CHANNELS; ++i)
+    {       
+        for (int j = 0; j < FRAMES_PER_BUFFER; ++j)
+        {                       
+            data->ordbuffer[i * FRAMES_PER_BUFFER + j] = data->buffer[j * NUM_CHANNELS + i];
+        }
+        
+    }
+    cufftExecR2C(data->plan1, data->ordbuffer, data->FFTdata1, CUFFT_FORWARD);
+    
 
     // beamform
-    int numBlocks;
+    /*int numBlocks;
     dim3 threadsPerBlock;
     if (NUM_VIEWS * NUM_VIEWS > MAX_THREADS_PER_BLOCK){
         numBlocks = (NUM_VIEWS * NUM_VIEWS) % MAX_THREADS_PER_BLOCK + 1;
@@ -135,7 +144,7 @@ static int streamCallback(
 
     // convert 1d index to 2d index
     data->thetaID = maxID % int(NUM_VIEWS);
-    data->phiID = maxID / int(NUM_VIEWS);
+    data->phiID = maxID / int(NUM_VIEWS);*/
 
     return finished;
 }
@@ -192,6 +201,7 @@ void listen_live()
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
 
+    // setup interpolation data for the views and channels
     theta = linspace(MIN_VIEW, NUM_VIEWS);
     phi = linspace(MIN_VIEW, NUM_VIEWS);
     delay = calcDelays();
@@ -209,11 +219,19 @@ void listen_live()
     inputParameters.sampleFormat = paFloat32;
     inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
 
-    paTestData* data = (paTestData*)malloc(sizeof(paTestData));
+    beamformingData* data = (beamformingData*)malloc(sizeof(beamformingData));
     data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
     data->frameIndex = 0;
+    
+    int n[1] = {FRAMES_PER_BUFFER};
 
+    cufftPlan1d(&(data->plan1), FRAMES_PER_BUFFER, CUFFT_R2C, NUM_CHANNELS);
+    cufftPlanMany(&(data->plan2), 1, n, NULL, NUM_CHANNELS, 1, NULL, NUM_CHANNELS, 1, CUFFT_R2C, NUM_CHANNELS);
+
+    cudaMalloc(&(data->FFTdata1), sizeof(cufftComplex) * FRAMES_PER_BUFFER * NUM_CHANNELS);
+    cudaMalloc(&(data->FFTdata2), sizeof(cufftComplex) * FRAMES_PER_BUFFER * NUM_CHANNELS); // to be deleted
     cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
+    cudaMalloc(&(data->ordbuffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
     cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
     cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
@@ -246,13 +264,15 @@ void listen_live()
     err = Pa_StartStream(stream);
     checkErr(err);
 
-    FILE* signal = popen("gnuplot", "w");
+    FILE* signal = popen("gnuplot", "w");    
+    const int nrows = 4, ncols = 4;    
+    int row, col;
 
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
     {
         //Pa_Sleep(100);
         // plot maximum direction
-        plt::figure(1);
+        /*plt::figure(1);
         plt::title("Max direction plot");
         plt::clf();
         plt::scatter(std::vector<float>{theta[data->thetaID] * 180.0f / (float)M_PI}, std::vector<float>{phi[data->phiID] * 180.0f / (float)M_PI}, 25.0, {{"color", "red"}});
@@ -261,12 +281,28 @@ void listen_live()
         plt::xlabel("theta");
         plt::ylabel("phi");
         plt::grid(true);
-        plt::pause(0.15);
+        plt::pause(0.15);*/
         //printf("theta = %f\n", data->theta );
         //printf("phi = %f\n", data->phi );
         //printf("maxframeindex = %d\n", data->maxFrameIndex );
         //printf("frameindex = %d\n", data->frameIndex );
         //fflush(stdout);
+
+        // plot frequency contents of channels
+        /*plt::figure(2);
+        plt::title("Frequency contents");
+        plt::clf();
+        for(int w = 0; w < NUM_CHANNELS; ++w){
+            row = w / 4;
+            col = w % 4;
+            plt::subplot2grid(nrows, ncols, row, col);
+            plt::plot({1.0,2.0,3.0,4.0});
+            plt::xlabel("freq bin");
+        }
+        //plt::show();
+        plt::pause(0.02);
+        
+
 
         // plot beamforming results in color map
         fprintf(signal, "unset key\n");
@@ -288,8 +324,8 @@ void listen_live()
         fflush(signal);    
 
         // Display the buffered changes to stdout in the terminal
-        fflush(stdout);
-    }
+        fflush(stdout);*/
+    }    
 
     // Stop capturing audio
     err = Pa_StopStream(stream);
@@ -310,6 +346,10 @@ void listen_live()
     cudaFree(data->b);
     cudaFree(data->alpha);
     cudaFree(data->beta);
+    cudaFree(data->FFTdata1);
+    cudaFree(data->FFTdata2); // to be deleted
+    cufftDestroy(data->plan1);
+    cufftDestroy(data->plan2); // to be deleted
     free(delay);
     free(theta);
     free(phi);    
@@ -325,8 +365,7 @@ void listen_live()
     //return EXIT_SUCCESS;
 }
 
-void beamform_prerecorded(
-    unsigned long framesPerBuffer, paTestData* data) 
+void beamform_prerecorded(unsigned long framesPerBuffer, beamformingData* data) 
 {
     unsigned long framesLeft = data->maxFrameIndex - data->frameIndex;
 
@@ -412,7 +451,7 @@ void listen_prerecorded(std::vector<AudioFile<float>>& files)
     alpha = calcalpha();
     beta = calcbeta();
 
-    paTestData* data = (paTestData*)malloc(sizeof(paTestData));
+    beamformingData* data = (beamformingData*)malloc(sizeof(beamformingData));
     data->maxFrameIndex = files[0].getNumSamplesPerChannel();
     data->frameIndex = 0;
 
@@ -444,7 +483,9 @@ void listen_prerecorded(std::vector<AudioFile<float>>& files)
         // do calculations and drawings
 
         beamform_prerecorded(FRAMES_PER_BUFFER, data);
-        data->buffer += FRAMES_PER_BUFFER*NUM_CHANNELS;
+        // the entire buffer is already created, but this simulates the stream, after the first FRAMES_PER_BUFFER has been processed, update the pointer to point 
+        // to the next frames that should be processed by the beamforming algorithm
+        data->buffer += FRAMES_PER_BUFFER*NUM_CHANNELS; 
 
         plt::figure(1);
         plt::title("Max direction plot");
