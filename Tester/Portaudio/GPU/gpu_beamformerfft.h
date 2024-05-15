@@ -1,5 +1,5 @@
-#ifndef GPUBEAMFORMER_H
-#define GPUBEAMFORMER_H
+#ifndef GPUBEAMFORMERFFT_H
+#define GPUBEAMFORMERFFT_H
 #define _USE_MATH_DEFINES
 #include <stdlib.h>
 #include <stdio.h>
@@ -10,6 +10,7 @@
 
 #include <portaudio.h> // PortAudio: Used for audio capture
 #include "AudioFile.h"
+#include <fftw3.h>
 
 #define SAMPLE_RATE (44100.0)   // How many audio samples to capture every second (44100 Hz is standard)
 #define FRAMES_PER_BUFFER (2048) // Half of how many audio samples to send to our callback function for each channel
@@ -24,6 +25,8 @@
 
 #define MAX_THREADS_PER_BLOCK (1024)
 
+#define SINGLE_OUTPUT_SIZE (FRAMES_PER_BUFFER / 2 + 1)
+
 #define sind(x) (sin(fmod((x),360) * M_PI / 180))
 #define cosd(x) (cos(fmod((x),360) * M_PI / 180))
 
@@ -35,7 +38,7 @@ typedef struct {
     int maxFrameIndex;
     int frameIndex;
     float* buffer;
-    float* ordbuffer; // ordered version of buffer ()
+    float* ordbuffer; // ordered version of buffer ()    
     float* gpubeams;
     float* cpubeams;
     int* a;
@@ -45,6 +48,9 @@ typedef struct {
     int thetaID;
     int phiID;
     float* summedSignals;
+    fftwf_plan plans[NUM_CHANNELS];
+    fftwf_complex* h_fft_data;
+    fftwf_complex* d_fft_data;
 } beamformingData;
 
 // positions in the microphone array

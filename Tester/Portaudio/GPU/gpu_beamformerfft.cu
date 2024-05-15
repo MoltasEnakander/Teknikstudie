@@ -1,4 +1,4 @@
-#include "gpu_beamformer.h"
+#include "gpu_beamformerfft.h"
 
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
@@ -96,15 +96,24 @@ static int streamCallback(
 
     cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
     
-    for (int i = 0; i < NUM_CHANNELS; ++i)
+    for (int i = 0; i < NUM_CHANNELS; ++i) // sort the incoming buffer based on channel
     {       
         for (int j = 0; j < FRAMES_PER_BUFFER; ++j)
-        {                       
-            data->ordbuffer[i * FRAMES_PER_BUFFER + j] = data->buffer[j * NUM_CHANNELS + i];
+        {           
+            data->ordbuffer[i * FRAMES_PER_BUFFER + j] = in[j * NUM_CHANNELS + i];
         }
         
     }
-    
+
+    for (int i = 0; i < NUM_CHANNELS; ++i) // calculate fft for each channel
+    {
+        fftwf_execute(data->plans[i]);
+    }
+
+    cudaMemcpy(data->d_fft_data, data->h_fft_data, SINGLE_OUTPUT_SIZE*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
+
+
+
     // beamform
     /*int numBlocks;
     dim3 threadsPerBlock;
@@ -219,22 +228,29 @@ void listen_live()
     beamformingData* data = (beamformingData*)malloc(sizeof(beamformingData));
     data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
     data->frameIndex = 0;
+
+    for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block
+    {
+        data->plans[i] = fftwf_plan_dft_r2c_1d(FRAMES_PER_BUFFER, &data->ordbuffer[i * FRAMES_PER_BUFFER], &data->h_fft_data[i * SINGLE_OUTPUT_SIZE], FFTW_ESTIMATE);
+    }
     
-    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
-    cudaMalloc(&(data->ordbuffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
+    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);    
     cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
     cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->alpha), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->summedSignals), sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES_PER_BUFFER);    
+    cudaMalloc(&(data->d_fft_data), sizeof(float) * SINGLE_OUTPUT_SIZE * NUM_CHANNELS);
     
     cudaMemcpy(data->a, a, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->alpha, alpha, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(data->beta, beta, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
     
-    data->cpubeams = (float*)malloc(NUM_VIEWS*NUM_VIEWS*sizeof(float));
+    data->cpubeams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * sizeof(float));
+    data->ordbuffer = (float*)malloc(FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(float));
+    data->h_fft_data = (fftwf_complex*)malloc(SINGLE_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
 
     // Open the PortAudio stream
     PaStream* stream;
