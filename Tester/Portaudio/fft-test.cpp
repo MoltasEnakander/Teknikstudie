@@ -34,7 +34,7 @@ int main()
     
     fftwf_complex *fft_cpu;
     float *fftwf_input;
-    fftwf_plan p1, p2, p3, p4;
+    //fftwf_plan p1, p2, p3, p4;
     fftwf_plan plans[4];
 
 	// create sine signals, each channel will have a different pure sine wave
@@ -269,10 +269,10 @@ int main()
         fftwf_destroy_plan(plans[i]);
     }
 
-    fftwf_destroy_plan(p1);
+    /*fftwf_destroy_plan(p1);
     fftwf_destroy_plan(p2);
     fftwf_destroy_plan(p3);
-    fftwf_destroy_plan(p4);
+    fftwf_destroy_plan(p4);*/
 
 	return 0;
 }

@@ -55,11 +55,34 @@ void beamforming(const float* inputBuffer, float* beams, const int* a, const int
     beams[i] = 10 * log10(beamstrength);
 }
 
+void free_resources(beamformingData* data){
+    // free allocated memory
+    cudaFree(data->buffer);
+    cudaFree(data->summedSignals);
+    cudaFree(data->gpubeams);    
+    cudaFree(data->a);
+    cudaFree(data->b);
+    cudaFree(data->alpha);
+    cudaFree(data->beta);    
+    cudaFree(data->d_fft_data);    
+    free(data->cpubeams);
+    free(data->ordbuffer);
+    free(data->h_fft_data);    
+
+    for (int i = 0; i < NUM_CHANNELS; ++i)
+    {
+        fftwf_destroy_plan(data->plans[i]);
+    }
+
+    free(data);
+}
+
 // Checks the return value of a PortAudio function. Logs the message and exits
 // if there was an error
-static void checkErr(PaError err) {
+static void checkErr(PaError err, beamformingData* data) {
     if (err != paNoError) {
         printf("PortAudio error: %s\n", Pa_GetErrorText(err));
+        free_resources(data);
         exit(EXIT_FAILURE);
     }
 }
@@ -110,9 +133,7 @@ static int streamCallback(
         fftwf_execute(data->plans[i]);
     }
 
-    cudaMemcpy(data->d_fft_data, data->h_fft_data, SINGLE_OUTPUT_SIZE*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
-
-
+    cudaMemcpy(data->d_fft_data, data->h_fft_data, SINGLE_OUTPUT_SIZE*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory
 
     // beamform
     /*int numBlocks;
@@ -160,7 +181,7 @@ void listen_live()
     // Initialize PortAudio
     PaError err;
     err = Pa_Initialize();
-    checkErr(err);
+    checkErr(err, nullptr);
 
     // --------------------------------------------------------------------------------------------------------------
     // ------------------------ List all available audio devices and look for desired device ------------------------
@@ -227,12 +248,7 @@ void listen_live()
 
     beamformingData* data = (beamformingData*)malloc(sizeof(beamformingData));
     data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
-    data->frameIndex = 0;
-
-    for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block
-    {
-        data->plans[i] = fftwf_plan_dft_r2c_1d(FRAMES_PER_BUFFER, &data->ordbuffer[i * FRAMES_PER_BUFFER], &data->h_fft_data[i * SINGLE_OUTPUT_SIZE], FFTW_ESTIMATE);
-    }
+    data->frameIndex = 0;    
     
     cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);    
     cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
@@ -247,10 +263,17 @@ void listen_live()
     cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->alpha, alpha, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(data->beta, beta, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
+
+    free(theta); free(phi); free(delay); free(a); free(b); free(alpha); free(beta); // free memory which does not have to be allocated anymore
     
     data->cpubeams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * sizeof(float));
-    data->ordbuffer = (float*)malloc(FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(float));
-    data->h_fft_data = (fftwf_complex*)malloc(SINGLE_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
+    data->ordbuffer = (float*)fftwf_malloc(FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(float));
+    data->h_fft_data = (fftwf_complex*)fftwf_malloc(SINGLE_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
+
+    for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block
+    {
+        data->plans[i] = fftwf_plan_dft_r2c_1d(FRAMES_PER_BUFFER, &data->ordbuffer[i * FRAMES_PER_BUFFER], &data->h_fft_data[i * SINGLE_OUTPUT_SIZE], FFTW_ESTIMATE);
+    }
 
     // Open the PortAudio stream
     PaStream* stream;
@@ -264,18 +287,38 @@ void listen_live()
         streamCallback,
         data
     );
-    checkErr(err);
+    checkErr(err, data);
 
     // Begin capturing audio
     err = Pa_StartStream(stream);
-    checkErr(err);
+    checkErr(err, data);
 
     FILE* signal = popen("gnuplot", "w");    
     //const int nrows = 4, ncols = 4;    
     //int row, col;
 
+    std::vector<int> bins;
+    for (int i = 0; i < SINGLE_OUTPUT_SIZE; ++i)
+    {
+        bins.push_back(i);
+    }
+
+    std::vector<float> ch1(SINGLE_OUTPUT_SIZE);
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
     {
+        for (int i = 0; i < SINGLE_OUTPUT_SIZE; ++i)
+        {
+            ch1.at(i) = sqrt(data->h_fft_data[i][0] * data->h_fft_data[i][0] + data->h_fft_data[i][1] * data->h_fft_data[i][1]);
+        }
+
+        plt::figure(7);
+        plt::title("Frequency contents, channel 1");
+        plt::clf();    
+        plt::plot(bins, ch1);
+        plt::xlabel("freq bin");
+        
+        plt::pause(0.05);
+
         //Pa_Sleep(100);
         // plot maximum direction
         /*plt::figure(1);
@@ -335,218 +378,17 @@ void listen_live()
 
     // Stop capturing audio
     err = Pa_StopStream(stream);
-    checkErr(err);
+    checkErr(err, data);
 
     // Close the PortAudio stream
     err = Pa_CloseStream(stream);
-    checkErr(err);
+    checkErr(err, data);
 
     // Terminate PortAudio
     err = Pa_Terminate();
-    checkErr(err);
+    checkErr(err, data);
 
-    // free allocated memory
-    cudaFree(data->buffer);
-    cudaFree(data->gpubeams);    
-    cudaFree(data->a);
-    cudaFree(data->b);
-    cudaFree(data->alpha);
-    cudaFree(data->beta);    
-    free(delay);
-    free(theta);
-    free(phi);    
-    free(a);
-    free(b);
-    free(alpha);
-    free(beta);
-    free(data->cpubeams);
-    free(data);
-
-    printf("\n");    
-
-    //return EXIT_SUCCESS;
-}
-
-void beamform_prerecorded(unsigned long framesPerBuffer, beamformingData* data) 
-{
-    unsigned long framesLeft = data->maxFrameIndex - data->frameIndex;
-
-    printf("Frames left: %d\n", framesLeft);
-
-    //int frame = data->frameIndex;
-
-    if( framesLeft < framesPerBuffer )
-    {
-        data->frameIndex += framesLeft;        
-    }
-    else
-    {
-        data->frameIndex += framesPerBuffer;        
-    }   
-
-    // beamform
-    int numBlocks;
-    dim3 threadsPerBlock;
-    if (NUM_VIEWS * NUM_VIEWS > MAX_THREADS_PER_BLOCK){
-        numBlocks = (NUM_VIEWS * NUM_VIEWS) % MAX_THREADS_PER_BLOCK + 1;
-        threadsPerBlock = dim3(MAX_THREADS_PER_BLOCK);
-    }
-    else{
-        numBlocks = 1;
-        threadsPerBlock = dim3(NUM_VIEWS * NUM_VIEWS);
-    }
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(data->cpubeams, data->gpubeams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
-
-    int maxID = 0;
-    float maxVal = data->cpubeams[0];
-
-    for (int i = 1; i < NUM_VIEWS * NUM_VIEWS; i++)
-    {
-        if (maxVal < data->cpubeams[i]){
-            maxID = i;
-            maxVal = data->cpubeams[i];
-        }        
-    }
-
-    // convert 1d index to 2d index
-    data->thetaID = maxID % int(NUM_VIEWS);
-    data->phiID = maxID / int(NUM_VIEWS);    
-}
-
-
-void listen_prerecorded(std::vector<AudioFile<float>>& files)
-{
-    int length = files[0].getNumSamplesPerChannel() * NUM_CHANNELS;
-    int q = 1;
-    while (length == 0 && q < NUM_CHANNELS){ // some channels may be faulty and have 0 samples, make sure that length is longer than 0
-        printf("length: %d\n", length);
-        length = files[q].getNumSamplesPerChannel() * NUM_CHANNELS;
-        q++;
-    }
-    assert(length > 0); // if all channels are 0 samples long this will alert
-
-    float* inputBuffer = (float*)malloc(length*sizeof(float));
-    float* cpyinputBuffer = inputBuffer;
-
-    // build the inputbuffer
-    int idx = 0;
-    int idx2 = 0;
-    int channel = 0; // channel zero of each file, since each file is mono
-    for (int i = 0; i < length; ++i)
-    {
-        idx = i % NUM_CHANNELS;
-        idx2 = i / NUM_CHANNELS;
-        if (files[idx].getNumSamplesPerChannel() > 0) // if sample exist, copy it
-            inputBuffer[i] = files[idx].samples[channel][idx2];
-        else
-            inputBuffer[i] = 0; // if the channel does not have any samples, fill with zero
-    }
-
-    theta = linspace(MIN_VIEW, NUM_VIEWS);
-    phi = linspace(MIN_VIEW, NUM_VIEWS);
-    delay = calcDelays();
-    a = calca();
-    b = calcb();
-    alpha = calcalpha();
-    beta = calcbeta();
-
-    beamformingData* data = (beamformingData*)malloc(sizeof(beamformingData));
-    data->maxFrameIndex = files[0].getNumSamplesPerChannel();
-    data->frameIndex = 0;
-
-    cudaMalloc(&(data->buffer), sizeof(float) * length);
-    cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
-    cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->alpha), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->summedSignals), sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES_PER_BUFFER);    
-    
-    cudaMemcpy(data->buffer, cpyinputBuffer, length*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->a, a, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->alpha, alpha, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->beta, beta, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
-    
-    data->cpubeams = (float*)malloc(NUM_VIEWS*NUM_VIEWS*sizeof(float));
-
-    double duration = (double)FRAMES_PER_BUFFER / (double)files[0].getSampleRate();
-    printf("duration: %f %d %d\n", duration, FRAMES_PER_BUFFER, files[0].getSampleRate());
-    assert(duration > 0); // TODO: make robust
-
-    FILE* signal = popen("gnuplot", "w");
-    std::chrono::time_point<std::chrono::system_clock> start, end;
-    while (data->frameIndex < data->maxFrameIndex)
-    {        
-        start = std::chrono::system_clock::now();
-        // do calculations and drawings
-
-        beamform_prerecorded(FRAMES_PER_BUFFER, data);
-        // the entire buffer is already created, but this simulates the stream, after the first FRAMES_PER_BUFFER has been processed, update the pointer to point 
-        // to the next frames that should be processed by the beamforming algorithm
-        data->buffer += FRAMES_PER_BUFFER*NUM_CHANNELS; 
-
-        plt::figure(1);
-        plt::title("Max direction plot");
-        plt::clf();
-        plt::scatter(std::vector<float>{theta[data->thetaID] * 180.0f / (float)M_PI}, std::vector<float>{phi[data->phiID] * 180.0f / (float)M_PI}, 25.0, {{"color", "red"}});
-        plt::xlim(MIN_VIEW, MAX_VIEW);
-        plt::ylim(MIN_VIEW, MAX_VIEW);
-        plt::xlabel("theta");
-        plt::ylabel("phi");
-        plt::grid(true);
-        plt::pause(0.15);
-
-        // plot beamforming results in color map
-        fprintf(signal, "unset key\n");
-        fprintf(signal, "set pm3d\n");
-        fprintf(signal, "set view map\n");
-        fprintf(signal, "set xrange [ -0.5 : %f ] \n", NUM_VIEWS-0.5);
-        fprintf(signal, "set yrange [ -0.5 : %f ] \n", NUM_VIEWS-0.5);
-        fprintf(signal, "plot '-' matrix with image\n");
-        
-        for(int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i)    
-        {
-            fprintf(signal, "%f ", data->cpubeams[i]);
-            if ((i+1) % NUM_VIEWS == 0)
-                fprintf(signal, "\n");
-        }
-        
-        fprintf(signal, "e\n");
-        fprintf(signal, "e\n");
-        fflush(signal);    
-
-        // Display the buffered changes to stdout in the terminal
-        fflush(stdout);
-
-        end = std::chrono::system_clock::now();
-        std::chrono::duration<double> elapsed = end-start;
-
-        std::cout << "elapsed: " << elapsed.count() << "s\n";
-
-        //sleep(duration - elapsed.count()); // sleep for some time so that the playback "appears" like real time
-    }
-
-    // free allocated memory
-    free(inputBuffer);
-    free(delay);
-    free(theta);
-    free(phi);    
-    free(a);
-    free(b);
-    free(alpha);
-    free(beta);
-    free(data->cpubeams);
-    free(data);
-    cudaFree(data->buffer);
-    cudaFree(data->gpubeams);    
-    cudaFree(data->a);
-    cudaFree(data->b);
-    cudaFree(data->alpha);
-    cudaFree(data->beta);
+    free_resources(data);
 }
 
 /////////////////////////////////////////////////////////////
@@ -559,7 +401,7 @@ float* linspace(int a, int num)
 {
     // create a vector of length num
     //std::vector<double> v(NUM_VIEWS, 0);    
-    float* f = (float*)malloc(NUM_VIEWS*sizeof(float));
+    float* f = (float*)malloc(NUM_VIEWS*sizeof(float));    
              
     // now assign the values to the vector
     for (int i = 0; i < num; i++)
