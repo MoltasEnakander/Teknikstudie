@@ -94,19 +94,10 @@ static int streamCallback(
         finished = paContinue;
     }
 
-    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
-    
-    for (int i = 0; i < NUM_CHANNELS; ++i)
-    {       
-        for (int j = 0; j < FRAMES_PER_BUFFER; ++j)
-        {                       
-            data->ordbuffer[i * FRAMES_PER_BUFFER + j] = data->buffer[j * NUM_CHANNELS + i];
-        }
-        
-    }
+    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory   
     
     // beamform
-    /*int numBlocks;
+    int numBlocks;
     dim3 threadsPerBlock;
     if (NUM_VIEWS * NUM_VIEWS > MAX_THREADS_PER_BLOCK){
         numBlocks = (NUM_VIEWS * NUM_VIEWS) % MAX_THREADS_PER_BLOCK + 1;
@@ -141,7 +132,7 @@ static int streamCallback(
 
     // convert 1d index to 2d index
     data->thetaID = maxID % int(NUM_VIEWS);
-    data->phiID = maxID / int(NUM_VIEWS);*/
+    data->phiID = maxID / int(NUM_VIEWS);
 
     return finished;
 }
@@ -220,8 +211,7 @@ void listen_live()
     data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
     data->frameIndex = 0;
     
-    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
-    cudaMalloc(&(data->ordbuffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);
+    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);    
     cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
     cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
     cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);

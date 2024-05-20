@@ -1,7 +1,3 @@
-EXEC = paex_record
-
-EXEC2 = tutorial_cpp_audio_capture
-
 EXEC3 = beamformer
 
 EXEC4 = plot_signal
@@ -12,21 +8,15 @@ EXEC6 = gpu_beamformer
 
 EXEC7 = gpu_beamformer2
 
-EXEC8 = gpu_beamformer3
-
 EXEC9 = mainprogram
 
 EXEC10 = fft-test
 
+EXEC11 = pybind
+
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
 		-lrt -lasound -ljack -pthread -I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 #-I./lib/fftw-3.3.10/api -lfftw3 \
 		-lsfml-graphics -lsfml-window -lsfml-system	-I /usr/include/python3.8/ -lpython3.8
-
-$(EXEC): paex_record.c
-	g++ -o build/$@ $^ $(CLIB)
-
-$(EXEC2): tutorial_cpp_audio_capture.cpp
-	g++ -o build/$@ $^ $(CLIB)
 
 $(EXEC3): CPU/beamformer.cpp
 	g++ -o build/$@ $^ $(CLIB)
@@ -45,19 +35,18 @@ $(EXEC7): GPU/gpu_beamformer2.cu
 	nvcc -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8
 
-$(EXEC8): GPU/gpu_beamformer3.cu
-	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true -o build/$@ $^ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
-			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt
-
-$(EXEC9): GPU/main.cpp GPU/gpu_beamformerfft.cu
+$(EXEC9): main.cpp CPU/beamformer_wideband.cpp
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt -I./lib/AudioFile/include -I./lib/fftw-3.3.10/api -lfftw3f -lm \
-			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft
+			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft -I./extern/pybind11
 
 $(EXEC10): fft-test.cpp
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt -I./lib/AudioFile/include -I./lib/fftw-3.3.10/api -lfftw3f -lm \
-			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft
+			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft 
+
+$(EXEC11): pybind11test.cpp
+	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I /usr/include/python3.8/ -lpython3.8 -I./extern/pybind11
 
 install-deps: install-portaudio install-fftw
 .PHONY: install-deps

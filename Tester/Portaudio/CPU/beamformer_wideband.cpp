@@ -1,4 +1,4 @@
-#include "gpu_beamformerfft.h"
+#include "beamformer_wideband.h"
 
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
@@ -57,21 +57,21 @@ void beamforming(const float* inputBuffer, float* beams, const int* a, const int
 
 void free_resources(beamformingData* data){
     // free allocated memory
-    cudaFree(data->buffer);
-    cudaFree(data->summedSignals);
-    cudaFree(data->gpubeams);    
-    cudaFree(data->a);
-    cudaFree(data->b);
-    cudaFree(data->alpha);
-    cudaFree(data->beta);    
-    cudaFree(data->d_fft_data);    
-    free(data->cpubeams);
+    free(data->buffer);
+    free(data->summedSignals);
+    free(data->a);
+    free(data->b);
+    free(data->alpha);
+    free(data->beta);    
+    free(data->beams);
     free(data->ordbuffer);
-    free(data->h_fft_data);    
+    fftwf_free(data->fft_data);
+    fftwf_free(data->firfiltersfft);
 
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
-        fftwf_destroy_plan(data->plans[i]);
+        fftwf_destroy_plan(data->forw_plans[i]);
+        fftwf_destroy_plan(data->back_plans[i]);
     }
 
     free(data);
@@ -91,7 +91,7 @@ static void checkErr(PaError err, beamformingData* data) {
 // `2*FRAMES_PER_BUFFER` audio samples PortAudio captures. Used to process the
 // resulting audio sample.
 static int streamCallback(
-    const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer, // framesPerBuffer = 2 * FRAMES_PER_BUFFER
+    const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer,
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
 ) {
@@ -103,6 +103,7 @@ static int streamCallback(
 
     beamformingData* data = (beamformingData*)userData;
     
+    // keep track of when to stop listening
     int finished;
     unsigned long framesLeft = data->maxFrameIndex - data->frameIndex;
 
@@ -115,25 +116,48 @@ static int streamCallback(
     {
         data->frameIndex += framesPerBuffer;
         finished = paContinue;
-    }
-
-    cudaMemcpy(data->buffer, in, FRAMES_PER_BUFFER*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
+    }    
     
     for (int i = 0; i < NUM_CHANNELS; ++i) // sort the incoming buffer based on channel
     {       
-        for (int j = 0; j < FRAMES_PER_BUFFER; ++j)
-        {           
-            data->ordbuffer[i * FRAMES_PER_BUFFER + j] = in[j * NUM_CHANNELS + i];
-        }
-        
+        for (int j = 0; j < BLOCK_LEN; ++j)
+        {
+            if (j < FRAMES_PER_BUFFER)
+                data->ordbuffer[i * BLOCK_LEN + j] = in[j * NUM_CHANNELS + i];
+            else
+                data->ordbuffer[i * BLOCK_LEN + j] = 0.0f; // zero-pad 
+        }        
     }
 
     for (int i = 0; i < NUM_CHANNELS; ++i) // calculate fft for each channel
     {
-        fftwf_execute(data->plans[i]);
+        fftwf_execute(data->forw_plans[i]);
     }
 
-    cudaMemcpy(data->d_fft_data, data->h_fft_data, SINGLE_OUTPUT_SIZE*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice); // copy buffer to GPU memory
+    // perform multiplication in freq domain
+    for (int i = 0; i < NUM_CHANNELS; ++i) // for every channel
+    {
+        for (int j = 0; j < NUM_FILTERS; ++j) // for every filter
+        {
+            for (int k = 0; k < BLOCK_LEN; ++k) // for all samples
+            {
+                // point-wise multiplication between the samples in the filter and the signal. each signal has 16 versions and needs to be filtered by the 
+                // N_FILTERS different filters, the result from all this needs to be stored in a single 1d buffer
+                // fft_data borde ha [kanal1, --||--, frekvens 0], [kanal 1, --||--, frekvens 1]
+                // alltså, efter ovanstående fft:s, ska fft_data ha upprepad data för varje filter, men olika per kanal
+                // sen efter nedanstående multiplikation ska fft_data ha kanal först, sen kommer frekvens_binnarna för varje filter
+                // så [kanal 1, filter1, frekvens0], [kanal1, filter1, frekvens1], ..., [kanal1, filter2, frekvens0], ..., [kanal2, filter1, frekvens0]
+                data->fft_data = data->fft_data * data->firfiltersfft; // todo: fixa det här
+            }
+            
+            
+        }
+    }
+
+
+    // inverse transform back to time domain
+
+    
 
     // beamform
     /*int numBlocks;
@@ -148,7 +172,7 @@ static int streamCallback(
     }
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->gpubeams, data->a, data->b, data->alpha, data->beta, data->summedSignals);
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->d_beams, data->a, data->b, data->alpha, data->beta, data->summedSignals);
     cudaDeviceSynchronize();
     end = std::chrono::system_clock::now();
 
@@ -156,16 +180,16 @@ static int streamCallback(
 
     std::cout << "elapsed: " << elapsed.count() << "s\n";
 
-    cudaMemcpy(data->cpubeams, data->gpubeams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(data->h_beams, data->d_beams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
 
     int maxID = 0;
-    float maxVal = data->cpubeams[0];
+    float maxVal = data->h_beams[0];
 
     for (int i = 1; i < NUM_VIEWS * NUM_VIEWS; i++)
     {
-        if (maxVal < data->cpubeams[i]){
+        if (maxVal < data->h_beams[i]){
             maxID = i;
-            maxVal = data->cpubeams[i];
+            maxVal = data->h_beams[i];
         }        
     }
 
@@ -228,15 +252,6 @@ void listen_live()
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
 
-    // setup interpolation data for the views and channels
-    theta = linspace(MIN_VIEW, NUM_VIEWS);
-    phi = linspace(MIN_VIEW, NUM_VIEWS);
-    delay = calcDelays();
-    a = calca();
-    b = calcb();
-    alpha = calcalpha();
-    beta = calcbeta();
-
     // Define stream capture specifications
     PaStreamParameters inputParameters;
     memset(&inputParameters, 0, sizeof(inputParameters));
@@ -246,36 +261,90 @@ void listen_live()
     inputParameters.sampleFormat = paFloat32;
     inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
 
+    // setup necessary data containers for the beamforming
     beamformingData* data = (beamformingData*)malloc(sizeof(beamformingData));
     data->maxFrameIndex = NUM_SECONDS * SAMPLE_RATE; // Record for a few seconds.
-    data->frameIndex = 0;    
-    
-    cudaMalloc(&(data->buffer), sizeof(float) * FRAMES_PER_BUFFER * NUM_CHANNELS);    
-    cudaMalloc(&(data->gpubeams), sizeof(float) * NUM_VIEWS * NUM_VIEWS);
-    cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->alpha), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
-    cudaMalloc(&(data->summedSignals), sizeof(float) * NUM_VIEWS * NUM_VIEWS * FRAMES_PER_BUFFER);    
-    cudaMalloc(&(data->d_fft_data), sizeof(float) * SINGLE_OUTPUT_SIZE * NUM_CHANNELS);
-    
-    cudaMemcpy(data->a, a, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->alpha, alpha, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->beta, beta, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
+    data->frameIndex = 0;
 
-    free(theta); free(phi); free(delay); free(a); free(b); free(alpha); free(beta); // free memory which does not have to be allocated anymore
+    printf("Setting up fir filters.\n");    
+    py::scoped_interpreter python;
     
-    data->cpubeams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * sizeof(float));
-    data->ordbuffer = (float*)fftwf_malloc(FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(float));
-    data->h_fft_data = (fftwf_complex*)fftwf_malloc(SINGLE_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
+    auto scipy = py::module::import("scipy.signal");
+    py::scoped_interpreter python;
+
+    py::function my_func =
+        py::reinterpret_borrow<py::function>(
+            py::module::import("filtercreation").attr("filtercreation")  
+    );    
+    
+    py::list res = my_func(NUM_FILTERS, NUM_TAPS, BANDWIDTH); // create the filters
+    // temporary save state of data
+    std::vector<float> taps;
+    for (py::handle obj : res) {  // iterators!
+        taps.push_back(obj.attr("__float__")().cast<float>());
+    }
+
+    // transfer data for real, goal is to get a buffer that looks like (with zero-padded signals):
+    // filter1[0], filter1[1], ..., 0, 0, 0, filter2[0], filter2[1], ..., 0, 0, 0
+    // -------- BLOCK_LEN samples ---------, -------- BLOCK_LEN samples --------- 
+    float* firfilters = (float*)malloc(BLOCK_LEN * NUM_FILTERS * sizeof(float));
+    for (int i = 0; i < NUM_FILTERS; ++i)
+    {
+        for (int j = 0; j < BLOCK_LEN; ++j)
+        {
+            if (j < NUM_TAPS)
+                firfilters[i * BLOCK_LEN + j] = taps[NUM_TAPS * i + j]
+            else
+                firfilters[i * BLOCK_LEN + j] = 0.0f; // zero pad filters
+        }
+    }
+    taps.clear();
+
+    // apply fft to filters
+    data->firfiltersfft = (float*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_FILTERS * sizeof(float));
+    fftwf_plan filter_plans[NUM_FILTERS];
+    for (int i = 0; i < NUM_FILTERS; ++i) // create the plans for calculating the fft of each filter block
+    {
+        filter_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &fir_filters[i * BLOCK_LEN], &data->firfiltersfft[i * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
+    }
+
+    for (int i = 0; i < NUM_FILTERS; ++i)
+    {
+        fftwf_execute(filter_plans[i]);
+    }
+    
+    for (int i = 0; i < NUM_FILTERS; ++i)
+    {
+        fftwf_destroy_plan(filter_plans[i]);
+    }
+    free(firfilters);
+
+    printf("Setting up interpolation data.\n");
+    theta = linspace(MIN_VIEW, NUM_VIEWS);
+    phi = linspace(MIN_VIEW, NUM_VIEWS);
+    delay = calcDelays();
+    data->a = calca();
+    data->b = calcb();
+    data->alpha = calcalpha();
+    data->beta = calcbeta();    
+
+    free(theta); free(phi); free(delay); // free memory which does not have to be allocated anymore
+    
+    data->beams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * NUM_FILTERS * sizeof(float));
+    data->ordbuffer = (float*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(float));
+    data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
 
     for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block
-    {
-        data->plans[i] = fftwf_plan_dft_r2c_1d(FRAMES_PER_BUFFER, &data->ordbuffer[i * FRAMES_PER_BUFFER], &data->h_fft_data[i * SINGLE_OUTPUT_SIZE], FFTW_ESTIMATE);
+    { //todo: kolla över var det behövs större buffrar, NUM_C * NUM_F
+        for (int j = 0; j < NUM_FILTERS; ++j) // for each channel, there are NUM_FILTERS to apply, each application will need FFT_OUPUT_SIZE spots in the array
+        {
+            data->forw_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &data->ordbuffer[i * BLOCK_LEN], &data->fft_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
+            data->back_plans[i] = fftwf_plan_dft_c2r_1d(BLOCK_LEN, &data->ordbuffer[i * BLOCK_LEN], &data->fft_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
+        }        
     }
 
     // Open the PortAudio stream
+    printf("Starting stream.\n");
     PaStream* stream;
     err = Pa_OpenStream(
         &stream,
@@ -294,19 +363,17 @@ void listen_live()
     checkErr(err, data);
 
     FILE* signal = popen("gnuplot", "w");    
-    //const int nrows = 4, ncols = 4;    
-    //int row, col;
 
     std::vector<int> bins;
-    for (int i = 0; i < SINGLE_OUTPUT_SIZE; ++i)
+    for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
     {
         bins.push_back(i);
     }
 
-    std::vector<float> ch1(SINGLE_OUTPUT_SIZE);
+    std::vector<float> ch1(FFT_OUTPUT_SIZE);
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
     {
-        for (int i = 0; i < SINGLE_OUTPUT_SIZE; ++i)
+        for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
         {
             ch1.at(i) = sqrt(data->h_fft_data[i][0] * data->h_fft_data[i][0] + data->h_fft_data[i][1] * data->h_fft_data[i][1]);
         }
@@ -363,7 +430,7 @@ void listen_live()
         
         for(int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i)    
         {
-            fprintf(signal, "%f ", data->cpubeams[i]);
+            fprintf(signal, "%f ", data->h_beams[i]);
             if ((i+1) % NUM_VIEWS == 0)
                 fprintf(signal, "\n");
         }

@@ -1,0 +1,4 @@
+[submodule "Tester/Portaudio/extern/pybind11"]
+	path = Tester/Portaudio/extern/pybind11
+	url = https://github.com/pybind/pybind11
+	branch = stable

@@ -34,8 +34,7 @@
 typedef struct {
     int maxFrameIndex;
     int frameIndex;
-    float* buffer;
-    float* ordbuffer; // ordered version of buffer ()
+    float* buffer;    
     float* gpubeams;
     float* cpubeams;
     int* a;
