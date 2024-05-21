@@ -16,6 +16,11 @@
 #include <include/pybind11/embed.h>  // python interpreter
 #include <include/pybind11/stl.h>  // type conversion
 
+namespace py = pybind11;
+
+#include "matplotlibcpp.h"
+namespace plt = matplotlibcpp;
+
 #define SAMPLE_RATE (44100.0)       // How many audio samples to capture every second (44100 Hz is standard)
 #define NUM_CHANNELS (16)           // Number of audio channels to capture
 #define NUM_SECONDS (10)
@@ -32,7 +37,7 @@
 #define NUM_FILTERS (6)
 #define BANDWIDTH (1000 * 2 / SAMPLE_RATE)
 #define BLOCK_LEN (2048)                                    // how long a block will be to store zero padded signals
-#define FRAMES_PER_BUFFER (FFT_BLOCK_LEN - NUM_TAPS + 1)    // how many samples to save before callback function is called
+#define FRAMES_PER_BUFFER (BLOCK_LEN - NUM_TAPS + 1)    // how many samples to save before callback function is called
 
 #define FFT_OUTPUT_SIZE (BLOCK_LEN / 2 + 1)
 
@@ -59,8 +64,9 @@ typedef struct {
     fftwf_plan forw_plans[NUM_CHANNELS]; // contains plans for calculating fft:s    
     fftwf_plan back_plans[NUM_CHANNELS]; // contains plans for calculating inverse fft:s
 
-    fftwf_complex* fft_data;        // contains the fft-data for each channel
-    fftwf_complex* firfiltersfft;
+    fftwf_complex* fft_data;        // contains the fft-data for the recorded data, ordered by channel
+    fftwf_complex* firfiltersfft;   // fft of the filters
+    fftwf_complex* filtered_data;   // result of the pointwise multiplication
     
 } beamformingData;
 
@@ -69,23 +75,16 @@ static float ya[16] = {-0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, 1
 static float za[16] = {-1.5f, -1.5f, -0.5f, -0.5f, 0.5f, 0.5f, 1.5f, 1.5f, 1.5f, 1.5f, 0.5f, 0.5f, -0.5f, -0.5f, -1.5f, -1.5f};
 
 float* linspace(int a, int num);
-static float* theta = NULL;
-static float* phi = NULL;
 
-float* calcDelays();
-static float* delay = NULL;
+float* calcDelays(float* theta, float* phi);
 
-int* calca();
-static int* a = NULL;
+int* calca(float* delay);
 
-int* calcb();
-static int* b = NULL;
+int* calcb(int* a);
 
-float* calcalpha();
-static float* alpha = NULL;
+float* calcalpha(float* delay, int* b);
 
-float* calcbeta();
-static float* beta = NULL;
+float* calcbeta(float* alpha);
 
 void listen_live();
 

@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "CPU/beamformer_wideband.h"
+#include "../CPU/beamformer_wideband.h"
 //#include "gpu_beamformer.h"
 #include "AudioFile.h"
 

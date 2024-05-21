@@ -33,6 +33,9 @@ int main() {
 #include <include/pybind11/pybind11.h>
 #include <include/pybind11/embed.h>  // python interpreter
 #include <include/pybind11/stl.h>  // type conversion
+#include <cmath>
+#include <complex>
+#include <iomanip>
 #include <iostream>
 
 #include <chrono>
@@ -48,7 +51,7 @@ int main() {
       py::reinterpret_borrow<py::function>(
           py::module::import("filtercreation").attr("filtercreation")  
       );
-    
+
     //auto scipy = py::module::import("scipy.signal");
     //py::list res = scipy.attr("firwin")(10, std::vector<float>{0.3f});
     py::list res = my_func(3, 9, 0.05);
@@ -65,11 +68,19 @@ int main() {
     }
 
 
-    
-    
+
+
     end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;
 
     std::cout << "elapsed: " << elapsed.count() << "s\n";
+
+    std::complex<float> z1 = 3 - 7i;
+
+    std::complex<float> z2 = z1 * z1;
+
+    std::cout << "z2: " << z2 << '\n';
+
+
 }

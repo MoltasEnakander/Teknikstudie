@@ -1,77 +1,27 @@
 #include "beamformer_wideband.h"
 
-#include "matplotlibcpp.h"
-namespace plt = matplotlibcpp;
-
 #include <chrono>
 #include <ctime>
 #include <unistd.h>
 
-__global__
-void interpolateChannels(const float* inputBuffer, float* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta)
-{
-    int id;
-    int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index of this thread
-    int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * FRAMES_PER_BUFFER; // global index of this thread
-    for (int k = 0; k < NUM_CHANNELS; ++k)
-    {
-        id = k + i * NUM_CHANNELS;        
-        if (max(0, -a[id]) == 0 && l1 < FRAMES_PER_BUFFER - a[id]) // a >= 0
-            summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the a[id] end positions
-        else if (max(0, -a[id]) > 0 && l1 >= a[id]) 
-            summedSignals[l2] += alpha[id] * inputBuffer[(l1+a[id])*NUM_CHANNELS + k]; // do not write to the first a[id]-1 positions
-
-        if (max(0, -b[id]) == 0 && l1 < FRAMES_PER_BUFFER - b[id]) // b >= 0
-            summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the b[id] end positions
-        else if (max(0, -b[id]) > 0 && l1 >= b[id]) 
-            summedSignals[l2] += beta[id] * inputBuffer[(l1+b[id])*NUM_CHANNELS + k]; // do not write to the first b[id]-1 positions        
-    }
-}
-
-__global__ 
-void beamforming(const float* inputBuffer, float* beams, const int* a, const int* b, const float* alpha, const float* beta, float* summedSignals)
-{    
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (i >= NUM_VIEWS * NUM_VIEWS){
-        return;
-    }
-
-    // interpolate channels    
-    interpolateChannels<<<(FRAMES_PER_BUFFER+255)/256, 256>>>(inputBuffer, summedSignals, i, a, b, alpha, beta);
-    cudaDeviceSynchronize();
-
-    int idx;
-    float beamstrength = 0.0f;
-    // normalize
-    for (int q = 0; q < FRAMES_PER_BUFFER; ++q)
-    {
-        idx = q + i * FRAMES_PER_BUFFER;
-        summedSignals[idx] /= NUM_CHANNELS;
-        summedSignals[idx] = summedSignals[idx] * summedSignals[idx] / FRAMES_PER_BUFFER;
-        beamstrength += summedSignals[idx];
-    }
-
-    beams[i] = 10 * log10(beamstrength);
-}
 
 void free_resources(beamformingData* data){
-    // free allocated memory
-    free(data->buffer);
-    free(data->summedSignals);
+    // free allocated memory    
+    //free(data->summedSignals);
     free(data->a);
     free(data->b);
     free(data->alpha);
     free(data->beta);    
-    free(data->beams);
-    free(data->ordbuffer);
-    fftwf_free(data->fft_data);
-    fftwf_free(data->firfiltersfft);
+    free(data->beams);    
+    free(data->ordbuffer);    
+    fftwf_free(data->fft_data);    
+    fftwf_free(data->firfiltersfft);    
+    fftwf_free(data->filtered_data);    
 
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
         fftwf_destroy_plan(data->forw_plans[i]);
-        fftwf_destroy_plan(data->back_plans[i]);
+        //fftwf_destroy_plan(data->back_plans[i]);
     }
 
     free(data);
@@ -116,7 +66,10 @@ static int streamCallback(
     {
         data->frameIndex += framesPerBuffer;
         finished = paContinue;
-    }    
+    }
+
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    start = std::chrono::system_clock::now();
     
     for (int i = 0; i < NUM_CHANNELS; ++i) // sort the incoming buffer based on channel
     {       
@@ -135,29 +88,32 @@ static int streamCallback(
     }
 
     // perform multiplication in freq domain
+    int resultID, filterID, dataID;
     for (int i = 0; i < NUM_CHANNELS; ++i) // for every channel
     {
         for (int j = 0; j < NUM_FILTERS; ++j) // for every filter
         {
-            for (int k = 0; k < BLOCK_LEN; ++k) // for all samples
-            {
-                // point-wise multiplication between the samples in the filter and the signal. each signal has 16 versions and needs to be filtered by the 
-                // N_FILTERS different filters, the result from all this needs to be stored in a single 1d buffer
-                // fft_data borde ha [kanal1, --||--, frekvens 0], [kanal 1, --||--, frekvens 1]
-                // alltså, efter ovanstående fft:s, ska fft_data ha upprepad data för varje filter, men olika per kanal
-                // sen efter nedanstående multiplikation ska fft_data ha kanal först, sen kommer frekvens_binnarna för varje filter
-                // så [kanal 1, filter1, frekvens0], [kanal1, filter1, frekvens1], ..., [kanal1, filter2, frekvens0], ..., [kanal2, filter1, frekvens0]
-                data->fft_data = data->fft_data * data->firfiltersfft; // todo: fixa det här
+            for (int k = 0; k < FFT_OUTPUT_SIZE; ++k) // for all samples
+            {                
+                // k denotes frequency bin
+                // j denotes the filter
+                // i denotes the channel
+                resultID = k + j * FFT_OUTPUT_SIZE + i * FFT_OUTPUT_SIZE * NUM_FILTERS;
+                filterID = k + j * FFT_OUTPUT_SIZE;
+                dataID = k + i * FFT_OUTPUT_SIZE;
+                data->filtered_data[resultID][0] = data->fft_data[dataID][0] * data->firfiltersfft[filterID][0] - data->fft_data[dataID][1] * data->firfiltersfft[filterID][1];
+                data->filtered_data[resultID][1] = data->fft_data[dataID][0] * data->firfiltersfft[filterID][1] - data->fft_data[dataID][1] * data->firfiltersfft[filterID][0];
             }
-            
-            
         }
     }
 
+    end = std::chrono::system_clock::now();
 
-    // inverse transform back to time domain
+    std::chrono::duration<double> elapsed = end-start;
 
-    
+    std::cout << "elapsed: " << elapsed.count() << "s\n";
+
+    // inverse transform back to time domain    
 
     // beamform
     /*int numBlocks;
@@ -250,16 +206,7 @@ void listen_live()
     printf("Device = %d\n", device);
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
-    // --------------------------------------------------------------------------------------------------------------
-
-    // Define stream capture specifications
-    PaStreamParameters inputParameters;
-    memset(&inputParameters, 0, sizeof(inputParameters));
-    inputParameters.channelCount = NUM_CHANNELS;
-    inputParameters.device = device;
-    inputParameters.hostApiSpecificStreamInfo = NULL;
-    inputParameters.sampleFormat = paFloat32;
-    inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
+    // --------------------------------------------------------------------------------------------------------------    
 
     // setup necessary data containers for the beamforming
     beamformingData* data = (beamformingData*)malloc(sizeof(beamformingData));
@@ -267,9 +214,6 @@ void listen_live()
     data->frameIndex = 0;
 
     printf("Setting up fir filters.\n");    
-    py::scoped_interpreter python;
-    
-    auto scipy = py::module::import("scipy.signal");
     py::scoped_interpreter python;
 
     py::function my_func =
@@ -293,7 +237,7 @@ void listen_live()
         for (int j = 0; j < BLOCK_LEN; ++j)
         {
             if (j < NUM_TAPS)
-                firfilters[i * BLOCK_LEN + j] = taps[NUM_TAPS * i + j]
+                firfilters[i * BLOCK_LEN + j] = taps[NUM_TAPS * i + j];
             else
                 firfilters[i * BLOCK_LEN + j] = 0.0f; // zero pad filters
         }
@@ -301,11 +245,11 @@ void listen_live()
     taps.clear();
 
     // apply fft to filters
-    data->firfiltersfft = (float*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_FILTERS * sizeof(float));
+    data->firfiltersfft = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_FILTERS * sizeof(fftwf_complex));
     fftwf_plan filter_plans[NUM_FILTERS];
     for (int i = 0; i < NUM_FILTERS; ++i) // create the plans for calculating the fft of each filter block
     {
-        filter_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &fir_filters[i * BLOCK_LEN], &data->firfiltersfft[i * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
+        filter_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &firfilters[i * BLOCK_LEN], &data->firfiltersfft[i * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
     }
 
     for (int i = 0; i < NUM_FILTERS; ++i)
@@ -320,28 +264,38 @@ void listen_live()
     free(firfilters);
 
     printf("Setting up interpolation data.\n");
-    theta = linspace(MIN_VIEW, NUM_VIEWS);
-    phi = linspace(MIN_VIEW, NUM_VIEWS);
-    delay = calcDelays();
-    data->a = calca();
-    data->b = calcb();
-    data->alpha = calcalpha();
-    data->beta = calcbeta();    
-
+    float* theta = linspace(MIN_VIEW, NUM_VIEWS);
+    float* phi = linspace(MIN_VIEW, NUM_VIEWS);
+    float* delay = calcDelays(theta, phi);
+    data->a = calca(delay);
+    data->b = calcb(data->a);
+    data->alpha = calcalpha(delay, data->b);
+    data->beta = calcbeta(data->alpha);
     free(theta); free(phi); free(delay); // free memory which does not have to be allocated anymore
     
     data->beams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * NUM_FILTERS * sizeof(float));
     data->ordbuffer = (float*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(float));
-    data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
+    data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
+    data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
 
+    printf("Creating fft plans.\n");
     for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block
-    { //todo: kolla över var det behövs större buffrar, NUM_C * NUM_F
+    {
+        data->forw_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &data->ordbuffer[i * BLOCK_LEN], &data->fft_data[i * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
         for (int j = 0; j < NUM_FILTERS; ++j) // for each channel, there are NUM_FILTERS to apply, each application will need FFT_OUPUT_SIZE spots in the array
         {
-            data->forw_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &data->ordbuffer[i * BLOCK_LEN], &data->fft_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
-            data->back_plans[i] = fftwf_plan_dft_c2r_1d(BLOCK_LEN, &data->ordbuffer[i * BLOCK_LEN], &data->fft_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
-        }        
+            //data->back_plans[i] = fftwf_plan_dft_c2r_1d(BLOCK_LEN, &data->filtered_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], &data->ordbuffer[i * BLOCK_LEN], FFTW_ESTIMATE);
+        }
     }
+    
+    printf("Defining stream paramters.\n");
+    PaStreamParameters inputParameters;
+    memset(&inputParameters, 0, sizeof(inputParameters));
+    inputParameters.channelCount = NUM_CHANNELS;
+    inputParameters.device = device;
+    inputParameters.hostApiSpecificStreamInfo = NULL;
+    inputParameters.sampleFormat = paFloat32;
+    inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
 
     // Open the PortAudio stream
     printf("Starting stream.\n");
@@ -370,18 +324,32 @@ void listen_live()
         bins.push_back(i);
     }
 
-    std::vector<float> ch1(FFT_OUTPUT_SIZE);
+    std::vector<float> ch1(FFT_OUTPUT_SIZE), lpf(FFT_OUTPUT_SIZE), res1(FFT_OUTPUT_SIZE); 
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
     {
         for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
         {
-            ch1.at(i) = sqrt(data->h_fft_data[i][0] * data->h_fft_data[i][0] + data->h_fft_data[i][1] * data->h_fft_data[i][1]);
+            ch1.at(i) = sqrt(data->fft_data[i][0] * data->fft_data[i][0] + data->fft_data[i][1] * data->fft_data[i][1]);
+            lpf.at(i) = sqrt(data->firfiltersfft[i][0] * data->firfiltersfft[i][0] + data->firfiltersfft[i][1] * data->firfiltersfft[i][1]);
+            res1.at(i) = sqrt(data->filtered_data[i][0] * data->filtered_data[i][0] + data->filtered_data[i][1] * data->filtered_data[i][1]);
         }
 
-        plt::figure(7);
+        plt::figure(10);
         plt::title("Frequency contents, channel 1");
         plt::clf();    
         plt::plot(bins, ch1);
+        plt::xlabel("freq bin");
+
+        plt::figure(11);
+        plt::title("Frequency contents, channel 1");
+        plt::clf();    
+        plt::plot(bins, lpf);
+        plt::xlabel("freq bin");
+
+        plt::figure(12);
+        plt::title("Frequency contents, channel 1");
+        plt::clf();    
+        plt::plot(bins, res1);
         plt::xlabel("freq bin");
         
         plt::pause(0.05);
@@ -478,13 +446,14 @@ float* linspace(int a, int num)
     return f;
 }
 
-float* calcDelays()
+float* calcDelays(float* theta, float* phi)
 {
-    float* d = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));   
+    float* d = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
+    printf("Ha1\n");
 
     int pid = 0;
     int tid = 0;
-    for (int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i){
+    for (int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i){        
         for (int k = 0; k < NUM_CHANNELS; ++k){
             d[k + i * NUM_CHANNELS] = -(ya[k] * sinf(theta[tid]) * cosf(phi[pid]) + za[k] * sinf(phi[pid])) * ARRAY_DIST / C * SAMPLE_RATE;
         }
@@ -497,7 +466,7 @@ float* calcDelays()
     return d;
 }
 
-int* calca()
+int* calca(float* delay)
 {
     int* a = (int*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int));
     for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
@@ -507,7 +476,7 @@ int* calca()
     return a;
 }
 
-int* calcb()
+int* calcb(int* a)
 {
     int* b = (int*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int));
     for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
@@ -517,7 +486,7 @@ int* calcb()
     return b;
 }
 
-float* calcalpha()
+float* calcalpha(float* delay, int* b)
 {
     float* alpha = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
     for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
@@ -527,7 +496,7 @@ float* calcalpha()
     return alpha;
 }
 
-float* calcbeta()
+float* calcbeta(float* alpha)
 {
     float* beta = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
     for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
