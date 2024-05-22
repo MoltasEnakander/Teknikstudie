@@ -39,6 +39,7 @@ namespace plt = matplotlibcpp;
 #define BLOCK_LEN (2048)                                    // how long a block will be to store zero padded signals
 #define FRAMES_PER_BUFFER (BLOCK_LEN - NUM_TAPS + 1)    // how many samples to save before callback function is called
 
+#define NUM_OLA_BLOCK = (8) // how many blocks to store using overlap-add method before starting to apply FFT:s 
 #define FFT_OUTPUT_SIZE (BLOCK_LEN / 2 + 1)
 
 #define sind(x) (sin(fmod((x),360) * M_PI / 180))
