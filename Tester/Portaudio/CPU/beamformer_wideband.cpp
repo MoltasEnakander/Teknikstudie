@@ -4,6 +4,8 @@
 #include <ctime>
 #include <unistd.h>
 
+#include <thread>
+
 
 void free_resources(beamformingData* data){
     // free allocated memory    
@@ -14,17 +16,54 @@ void free_resources(beamformingData* data){
     free(data->beta);    
     free(data->beams);    
     free(data->ordbuffer);    
-    fftwf_free(data->fft_data);    
-    fftwf_free(data->firfiltersfft);    
-    fftwf_free(data->filtered_data);    
+    fftwf_free(data->fft_data);
+    fftwf_free(data->firfiltersfft);
+    fftwf_free(data->filtered_data);
+    fftwf_free(data->filtered_data_temp);
+    fftwf_free(data->OLA_signal);
 
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
         fftwf_destroy_plan(data->forw_plans[i]);
-        //fftwf_destroy_plan(data->back_plans[i]);
+        for (int j = 0; j < NUM_FILTERS; ++j)
+        {
+            fftwf_destroy_plan(data->back_plans[i * NUM_FILTERS + j]);
+        }
+        
     }
 
     free(data);
+}
+
+
+void shift(beamformingData *data, int i){
+    // OLA_signal is ordered by channel first, then filter, then blocks
+    // shift out previous block and add the newest block at the end
+    int single_OLA_space = (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN;
+    for (int j = 0; j < NUM_FILTERS; ++j)
+    {
+        for (int k = 0; k < NUM_OLA_BLOCK - 1; ++k)
+        {
+            // shift FRAMES_PER_BUFFER to the left
+            for (int l = 0; l < FRAMES_PER_BUFFER; ++l)
+            {                    
+                data->OLA_signal[l + k * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] = \
+                data->OLA_signal[l + (k+1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space];
+            }
+        }            
+        // shift in last part and add new part
+        for (int l = 0; l < BLOCK_LEN - FRAMES_PER_BUFFER; ++l)
+        {
+            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] = \
+            data->OLA_signal[l + NUM_OLA_BLOCK * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] + \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN;
+        }
+        for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < BLOCK_LEN; ++l)
+        {
+            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] = \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN;
+        }
+    }    
 }
 
 // Checks the return value of a PortAudio function. Logs the message and exits
@@ -102,16 +141,57 @@ static int streamCallback(
                 filterID = k + j * FFT_OUTPUT_SIZE;
                 dataID = k + i * FFT_OUTPUT_SIZE;
                 data->filtered_data[resultID][0] = data->fft_data[dataID][0] * data->firfiltersfft[filterID][0] - data->fft_data[dataID][1] * data->firfiltersfft[filterID][1];
-                data->filtered_data[resultID][1] = data->fft_data[dataID][0] * data->firfiltersfft[filterID][1] - data->fft_data[dataID][1] * data->firfiltersfft[filterID][0];
+                data->filtered_data[resultID][1] = data->fft_data[dataID][0] * data->firfiltersfft[filterID][1] + data->fft_data[dataID][1] * data->firfiltersfft[filterID][0];                
             }
+            // inverse fourier transform to get back signals in time domain. each block has been filtered through NUM_FILTERS different filters and this is done for each channel
+            // there should be (NUM_FILTERS * NUM_CHANNELS) blocks in total
+            fftwf_execute(data->back_plans[i * NUM_FILTERS + j]);
         }
-    }
+    }    
+    
+    // add block to the OLA_signal, divide the work on several threads    
+    std::thread th1(shift, data, 0);
+    std::thread th2(shift, data, 1);
+    std::thread th3(shift, data, 2);
+    std::thread th4(shift, data, 3);
+    std::thread th5(shift, data, 4);
+    std::thread th6(shift, data, 5);
+    std::thread th7(shift, data, 6);
+    std::thread th8(shift, data, 7);
+    std::thread th9(shift, data, 8);
+    std::thread th10(shift, data, 9);
+    std::thread th11(shift, data, 10);
+    std::thread th12(shift, data, 11);
+    std::thread th13(shift, data, 12);
+    std::thread th14(shift, data, 13);
+    std::thread th15(shift, data, 14);
+    std::thread th16(shift, data, 15);
+
+    // wait for threads to finish
+    th1.join();
+    th2.join();
+    th3.join();
+    th4.join();
+    th5.join();
+    th6.join();
+    th7.join();
+    th8.join();
+    th9.join();
+    th10.join();
+    th11.join();
+    th12.join();
+    th13.join();
+    th14.join();
+    th15.join();
+    th16.join();
+
+    // transform into frequency domain again and apply IQ decimation
 
     end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;
 
-    std::cout << "elapsed: " << elapsed.count() << "s\n";
+    //std::cout << "elapsed: " << elapsed.count() << "s\n";
 
     // inverse transform back to time domain    
 
@@ -262,6 +342,7 @@ void listen_live()
         fftwf_destroy_plan(filter_plans[i]);
     }
     free(firfilters);
+    printf("FIR filters are created.\n");
 
     printf("Setting up interpolation data.\n");
     float* theta = linspace(MIN_VIEW, NUM_VIEWS);
@@ -277,14 +358,23 @@ void listen_live()
     data->ordbuffer = (float*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(float));
     data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
     data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
+    data->filtered_data_temp = (float*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
+    data->OLA_signal = (float*)fftwf_malloc((FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
+
+    for (int i = 0; i < (FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS; ++i)
+    {
+        data->OLA_signal[i] = 0.0f;
+    }
 
     printf("Creating fft plans.\n");
     for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block
     {
-        data->forw_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &data->ordbuffer[i * BLOCK_LEN], &data->fft_data[i * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
-        for (int j = 0; j < NUM_FILTERS; ++j) // for each channel, there are NUM_FILTERS to apply, each application will need FFT_OUPUT_SIZE spots in the array
-        {
-            //data->back_plans[i] = fftwf_plan_dft_c2r_1d(BLOCK_LEN, &data->filtered_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], &data->ordbuffer[i * BLOCK_LEN], FFTW_ESTIMATE);
+        data->forw_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &data->ordbuffer[i * BLOCK_LEN], &data->fft_data[i * FFT_OUTPUT_SIZE], FFTW_ESTIMATE); // NUM_CHANNELS channels for each block which requires FFT_OUTPUT_SIZE spots to store the fft data
+        for (int j = 0; j < NUM_FILTERS; ++j)
+        {   // for each channel, there are NUM_FILTERS to apply, each application will need BLOCK_LEN spots in the array
+            // inverse fft to get back the signal after filtering in freq-domain. each signal will need BLOCK_LEN spots, for each channel input there are NUM_FILTERS filters that have been applied to the input to form NUM_FILTERS nr of outputs
+            data->back_plans[i * NUM_FILTERS + j] = fftwf_plan_dft_c2r_1d(BLOCK_LEN, &data->filtered_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], &data->filtered_data_temp[j * BLOCK_LEN + i * BLOCK_LEN * NUM_FILTERS], FFTW_ESTIMATE);
+            
         }
     }
     
@@ -318,13 +408,23 @@ void listen_live()
 
     FILE* signal = popen("gnuplot", "w");    
 
-    std::vector<int> bins;
+    std::vector<int> bins, time, time2;
     for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
     {
         bins.push_back(i);
     }
 
-    std::vector<float> ch1(FFT_OUTPUT_SIZE), lpf(FFT_OUTPUT_SIZE), res1(FFT_OUTPUT_SIZE); 
+    for (int i = 0; i < BLOCK_LEN; ++i)
+    {
+        time.push_back(i);
+    }
+
+    for (int i = NUM_OLA_BLOCK * FRAMES_PER_BUFFER; i < NUM_OLA_BLOCK * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
+    {
+        time2.push_back(i);
+    }
+
+    std::vector<float> ch1(FFT_OUTPUT_SIZE), lpf(FFT_OUTPUT_SIZE), res1(FFT_OUTPUT_SIZE), in(BLOCK_LEN), out(BLOCK_LEN), ola(BLOCK_LEN);
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
     {
         for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
@@ -332,27 +432,58 @@ void listen_live()
             ch1.at(i) = sqrt(data->fft_data[i][0] * data->fft_data[i][0] + data->fft_data[i][1] * data->fft_data[i][1]);
             lpf.at(i) = sqrt(data->firfiltersfft[i][0] * data->firfiltersfft[i][0] + data->firfiltersfft[i][1] * data->firfiltersfft[i][1]);
             res1.at(i) = sqrt(data->filtered_data[i][0] * data->filtered_data[i][0] + data->filtered_data[i][1] * data->filtered_data[i][1]);
+            //if (i > 100 && res1[i] > 0.03)
+            //    printf("fel vid %d\n", i);
         }
 
-        plt::figure(10);
+        for (int i = 0; i < BLOCK_LEN; ++i)
+        {
+            in.at(i) = data->ordbuffer[i];
+            out.at(i) = data->filtered_data_temp[i] / BLOCK_LEN;
+        }
+
+        for (int i = NUM_OLA_BLOCK * FRAMES_PER_BUFFER; i < NUM_OLA_BLOCK * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
+        {
+            ola.at(i - NUM_OLA_BLOCK * FRAMES_PER_BUFFER) = data->OLA_signal[i];
+        }
+
+        /*plt::figure(10);
         plt::title("Frequency contents, channel 1");
         plt::clf();    
         plt::plot(bins, ch1);
         plt::xlabel("freq bin");
 
         plt::figure(11);
-        plt::title("Frequency contents, channel 1");
+        plt::title("Frequency contents, lp filter");
         plt::clf();    
         plt::plot(bins, lpf);
         plt::xlabel("freq bin");
 
         plt::figure(12);
-        plt::title("Frequency contents, channel 1");
+        plt::title("Frequency contents, filter*signal");
         plt::clf();    
         plt::plot(bins, res1);
-        plt::xlabel("freq bin");
-        
-        plt::pause(0.05);
+        plt::xlabel("freq bin");*/
+
+        plt::figure(13);
+        plt::title("In signal");
+        plt::clf();    
+        plt::plot(time, in);
+        plt::xlabel("time");
+
+        plt::figure(14);
+        plt::title("Out signal");
+        plt::clf();    
+        plt::plot(time, out);
+        plt::xlabel("time");
+
+        plt::figure(15);
+        plt::title("OLA signal");
+        plt::clf();    
+        plt::plot(time2, ola);
+        plt::xlabel("time");
+
+        plt::pause(2.0);
 
         //Pa_Sleep(100);
         // plot maximum direction
@@ -448,8 +579,7 @@ float* linspace(int a, int num)
 
 float* calcDelays(float* theta, float* phi)
 {
-    float* d = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
-    printf("Ha1\n");
+    float* d = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));    
 
     int pid = 0;
     int tid = 0;

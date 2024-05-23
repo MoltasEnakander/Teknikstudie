@@ -34,12 +34,12 @@ namespace plt = matplotlibcpp;
 #define MAX_THREADS_PER_BLOCK (1024)
 
 #define NUM_TAPS (49)
-#define NUM_FILTERS (6)
+#define NUM_FILTERS (1)
 #define BANDWIDTH (1000 * 2 / SAMPLE_RATE)
-#define BLOCK_LEN (2048)                                    // how long a block will be to store zero padded signals
+#define BLOCK_LEN (2048)                                // how long a block will be to store zero padded signals
 #define FRAMES_PER_BUFFER (BLOCK_LEN - NUM_TAPS + 1)    // how many samples to save before callback function is called
 
-#define NUM_OLA_BLOCK = (8) // how many blocks to store using overlap-add method before starting to apply FFT:s 
+#define NUM_OLA_BLOCK (8) // how many blocks to store using overlap-add method before starting to apply FFT:s 
 #define FFT_OUTPUT_SIZE (BLOCK_LEN / 2 + 1)
 
 #define sind(x) (sin(fmod((x),360) * M_PI / 180))
@@ -63,11 +63,14 @@ typedef struct {
     int phiID;                      // phi index of the strongest beam
     float* summedSignals;           // contains a combined timesignal after each channel has been interpolated and the signals have been summed together
     fftwf_plan forw_plans[NUM_CHANNELS]; // contains plans for calculating fft:s    
-    fftwf_plan back_plans[NUM_CHANNELS]; // contains plans for calculating inverse fft:s
+    fftwf_plan back_plans[NUM_CHANNELS * NUM_FILTERS]; // contains plans for calculating inverse fft:s
 
     fftwf_complex* fft_data;        // contains the fft-data for the recorded data, ordered by channel
     fftwf_complex* firfiltersfft;   // fft of the filters
     fftwf_complex* filtered_data;   // result of the pointwise multiplication
+
+    float* filtered_data_temp;      // temporary container for the filtered data in the time domain, results will be added to OLA_signal
+    float* OLA_signal;              // contains the combined signal for each channel and filter, after construction using overlap-add
     
 } beamformingData;
 

@@ -17,13 +17,13 @@ namespace plt = matplotlibcpp;
 int main()
 {
 	const int FRAMES_PER_BUFFER = 2048;
-	const int NUM_CHANNELS = 4;
+	const int NUM_CHANNELS = 1;
 	const int NUM_ELEMENTS = FRAMES_PER_BUFFER * NUM_CHANNELS;
     const int SINGLE_OUTPUT_SIZE = FRAMES_PER_BUFFER / 2 + 1;
 	const int OUTPUT_SIZE = SINGLE_OUTPUT_SIZE * NUM_CHANNELS;
 	const float Fs = 44100.0f;
 	const float A = 5.0f;	
-	const float f = 1500.0f;
+	const float f = 50.0f;
 	float xt[NUM_CHANNELS][FRAMES_PER_BUFFER];
 	float signal[NUM_ELEMENTS];
 	float ordsignal[NUM_ELEMENTS];
@@ -34,8 +34,11 @@ int main()
     
     fftwf_complex *fft_cpu;
     float *fftwf_input;
+    float *fftwf_output;
     //fftwf_plan p1, p2, p3, p4;
     fftwf_plan plans[4];
+
+    fftwf_plan bplans[4];
 
 	// create sine signals, each channel will have a different pure sine wave
 	for (int i = 0; i < NUM_CHANNELS; ++i)
@@ -99,6 +102,7 @@ int main()
     cufftPlanMany(&(planMany), 1, n, inembed, NUM_CHANNELS, 1, onembed, NUM_CHANNELS, 1, CUFFT_R2C, NUM_CHANNELS);*/
 
     fftwf_input = (float*)fftwf_malloc(NUM_ELEMENTS * sizeof(float));
+    fftwf_output = (float*)fftwf_malloc((NUM_ELEMENTS + 128) * sizeof(float));
 
     memcpy(fftwf_input, ordsignal, NUM_ELEMENTS * sizeof(float));    
     fft_cpu = (fftwf_complex*)fftwf_malloc(OUTPUT_SIZE * sizeof(fftwf_complex));    
@@ -113,6 +117,11 @@ int main()
         plans[i] = fftwf_plan_dft_r2c_1d(FRAMES_PER_BUFFER, &fftwf_input[i * FRAMES_PER_BUFFER], &fft_cpu[i * SINGLE_OUTPUT_SIZE], FFTW_ESTIMATE);
     }
 
+    for (int i = 0; i < NUM_CHANNELS; ++i)
+    {
+        bplans[i] = fftwf_plan_dft_c2r_1d(FRAMES_PER_BUFFER, &fft_cpu[i * SINGLE_OUTPUT_SIZE], &fftwf_output[i * FRAMES_PER_BUFFER], FFTW_ESTIMATE);
+    }
+
 	// run the fft-calculations    
 
     std::chrono::time_point<std::chrono::system_clock> start, end;
@@ -125,11 +134,17 @@ int main()
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
         fftwf_execute(plans[i]);
+        fftwf_execute(bplans[i]);
     }
 
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed = end-start;
     std::cout << "elapsed: " << elapsed.count() << "s\n";
+
+    for (int i = 0; i < 128; ++i)
+    {
+        fftwf_output[NUM_ELEMENTS + i] = 2048.0f;
+    }
     
     /*start = std::chrono::system_clock::now();
 
@@ -194,6 +209,97 @@ int main()
         c20.push_back(sqrt(fft_cpu[i + 3*SINGLE_OUTPUT_SIZE][0] * fft_cpu[i + 3*SINGLE_OUTPUT_SIZE][0] + fft_cpu[i + 3*SINGLE_OUTPUT_SIZE][1] * fft_cpu[i + 3*SINGLE_OUTPUT_SIZE][1]));
     }
 
+    int BLOCK_LEN = FRAMES_PER_BUFFER + 128;
+    std::vector<float> s3, time2; 
+    for (int i = 0; i < BLOCK_LEN; ++i)
+    {        
+        s3.push_back(fftwf_output[i] / FRAMES_PER_BUFFER);
+        time2.push_back(i);
+    }
+
+    // plot signal(s)
+    plt::figure(32);
+    plt::title("Time signal after fft");
+    plt::clf();
+    plt::plot(time2, s3);
+    plt::xlabel("time (s)");
+
+    int OLA_block = 6;
+    
+    float* OLA = (float*)fftwf_malloc(((OLA_block - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * sizeof(float));
+
+    for (int i = 0; i < ((OLA_block - 1) * FRAMES_PER_BUFFER + BLOCK_LEN); ++i)
+    {
+        OLA[i] = 0.0f;
+    }
+
+    int NUM_FILTERS = 1;
+
+    // shift once
+    for (int k = 0; k < OLA_block - 1; ++k)
+    {
+        // shift FRAMES_PER_BUFFER to the left
+        for (int l = 0; l < FRAMES_PER_BUFFER; ++l)
+        {
+            OLA[l + k * FRAMES_PER_BUFFER] = OLA[l + (k+1) * FRAMES_PER_BUFFER];
+        }
+    }
+    // shift in last part and add new part
+    for (int l = 0; l < 128; ++l)
+    {
+        OLA[l + (OLA_block - 1) * FRAMES_PER_BUFFER] = OLA[l + OLA_block * FRAMES_PER_BUFFER] + fftwf_output[l] / FRAMES_PER_BUFFER;
+    }
+    for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < BLOCK_LEN; ++l)
+    {
+        OLA[l + (OLA_block - 1) * FRAMES_PER_BUFFER] = fftwf_output[l] / FRAMES_PER_BUFFER;
+    }
+
+
+    std::vector<float> s4, timesg; 
+    for (int i = 0; i < (OLA_block - 1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
+    {        
+        s4.push_back(OLA[i]);
+        timesg.push_back(i);
+    }
+
+    plt::figure(33);
+    plt::title("Time signal after fft");
+    plt::clf();
+    plt::plot(timesg, s4);
+    plt::xlabel("time (s)");
+
+    // shift again
+    for (int k = 0; k < OLA_block - 1; ++k)
+    {
+        // shift FRAMES_PER_BUFFER to the left
+        for (int l = 0; l < FRAMES_PER_BUFFER; ++l)
+        {
+            OLA[l + k * FRAMES_PER_BUFFER] = OLA[l + (k+1) * FRAMES_PER_BUFFER];
+        }
+    }
+    // shift in last part and add new part
+    for (int l = 0; l < 128; ++l)
+    {
+        OLA[l + (OLA_block - 1) * FRAMES_PER_BUFFER] = OLA[l + OLA_block * FRAMES_PER_BUFFER] + fftwf_output[l] / FRAMES_PER_BUFFER;
+    }
+    for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < BLOCK_LEN; ++l)
+    {
+        OLA[l + (OLA_block - 1) * FRAMES_PER_BUFFER] = fftwf_output[l] / FRAMES_PER_BUFFER;
+    }
+
+
+    std::vector<float> s5;
+    for (int i = 0; i < (OLA_block - 1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
+    {        
+        s5.push_back(OLA[i]);        
+    }
+
+    plt::figure(34);
+    plt::title("Time signal after fft");
+    plt::clf();
+    plt::plot(timesg, s5);
+    plt::xlabel("time (s)");
+
     // plot frequency contents of channels
     /*plt::figure(2);
     plt::title("Frequency contents");
@@ -219,14 +325,13 @@ int main()
     plt::plot(bins, c4);
     plt::xlabel("freq bin");
 
-
     plt::figure(6);
     plt::title("Frequency contents");
     plt::clf();    
     plt::plot(bins, c9);
     plt::xlabel("freq bin");*/
 
-    plt::figure(7);
+    /*plt::figure(7);
     plt::title("Frequency contents");
     plt::clf();    
     plt::plot(bins, c17);
@@ -248,7 +353,7 @@ int main()
     plt::title("Frequency contents");
     plt::clf();    
     plt::plot(bins, c20);
-    plt::xlabel("freq bin");
+    plt::xlabel("freq bin");*/
 
     plt::show();
 
@@ -263,10 +368,12 @@ int main()
     free(h_fftMany);
     fftwf_free(fft_cpu);
     fftwf_free(fftwf_input);
+    fftwf_free(fftwf_output);
 
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
         fftwf_destroy_plan(plans[i]);
+        fftwf_destroy_plan(bplans[i]);
     }
 
     /*fftwf_destroy_plan(p1);
