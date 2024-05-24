@@ -8,7 +8,7 @@ def filtercreation(nFilters, nTaps, bandwidth):
 
 	for i in range(1, nFilters):
 		# add bandpass filters		
-		c = scipy.signal.firwin(nTaps, np.array([bandwidth*i, bandwidth*(i+1)]))		
+		c = scipy.signal.firwin(nTaps, np.array([bandwidth*i, bandwidth*(i+1)]), pass_zero='bandpass')
 		coeffs = np.append(coeffs, c) # remaining filters are bandpass filters
 	
 	return coeffs

@@ -77,18 +77,19 @@ static void checkErr(PaError err, beamformingData* data) {
 }
 
 // PortAudio stream callback function. Will be called after every
-// `2*FRAMES_PER_BUFFER` audio samples PortAudio captures. Used to process the
+// FRAMES_PER_BUFFER audio samples PortAudio captures. Used to process the
 // resulting audio sample.
 static int streamCallback(
     const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer,
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
-) {
+)
+{
     // Cast our input buffer to a float pointer (since our sample format is `paFloat32`)
     float* in = (float*)inputBuffer;
 
     // We will not be modifying the output buffer. This line is a no-op.
-    (void)outputBuffer;
+    //(void)outputBuffer;
 
     beamformingData* data = (beamformingData*)userData;
     
@@ -359,7 +360,7 @@ void listen_live()
     data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
     data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
     data->filtered_data_temp = (float*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
-    data->OLA_signal = (float*)fftwf_malloc((FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
+    data->OLA_signal = (float*)fftwf_malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
 
     for (int i = 0; i < (FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS; ++i)
     {
@@ -388,7 +389,7 @@ void listen_live()
     inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
 
     // Open the PortAudio stream
-    printf("Starting stream.\n");
+    printf("Starting stream.\n");    
     PaStream* stream;
     err = Pa_OpenStream(
         &stream,
@@ -419,21 +420,19 @@ void listen_live()
         time.push_back(i);
     }
 
-    for (int i = NUM_OLA_BLOCK * FRAMES_PER_BUFFER; i < NUM_OLA_BLOCK * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
+    for (int i = 0; i < (NUM_OLA_BLOCK-1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
     {
         time2.push_back(i);
     }
 
-    std::vector<float> ch1(FFT_OUTPUT_SIZE), lpf(FFT_OUTPUT_SIZE), res1(FFT_OUTPUT_SIZE), in(BLOCK_LEN), out(BLOCK_LEN), ola(BLOCK_LEN);
-    while( ( err = Pa_IsStreamActive( stream ) ) == 1 )
-    {
+    std::vector<float> ch1(FFT_OUTPUT_SIZE), lpf(FFT_OUTPUT_SIZE), res1(FFT_OUTPUT_SIZE), in(BLOCK_LEN), out(BLOCK_LEN), ola((NUM_OLA_BLOCK-1) * FRAMES_PER_BUFFER + BLOCK_LEN);
+    while( ( err = Pa_IsStreamActive( stream ) ) == 1 )    
+    {        
         for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
         {
             ch1.at(i) = sqrt(data->fft_data[i][0] * data->fft_data[i][0] + data->fft_data[i][1] * data->fft_data[i][1]);
-            lpf.at(i) = sqrt(data->firfiltersfft[i][0] * data->firfiltersfft[i][0] + data->firfiltersfft[i][1] * data->firfiltersfft[i][1]);
+            lpf.at(i) = sqrt(data->firfiltersfft[i + FFT_OUTPUT_SIZE][0] * data->firfiltersfft[i + FFT_OUTPUT_SIZE][0] + data->firfiltersfft[i + FFT_OUTPUT_SIZE][1] * data->firfiltersfft[i + FFT_OUTPUT_SIZE][1]);
             res1.at(i) = sqrt(data->filtered_data[i][0] * data->filtered_data[i][0] + data->filtered_data[i][1] * data->filtered_data[i][1]);
-            //if (i > 100 && res1[i] > 0.03)
-            //    printf("fel vid %d\n", i);
         }
 
         for (int i = 0; i < BLOCK_LEN; ++i)
@@ -442,16 +441,16 @@ void listen_live()
             out.at(i) = data->filtered_data_temp[i] / BLOCK_LEN;
         }
 
-        for (int i = NUM_OLA_BLOCK * FRAMES_PER_BUFFER; i < NUM_OLA_BLOCK * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
+        for (int i = 0; i < (NUM_OLA_BLOCK-1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
         {
-            ola.at(i - NUM_OLA_BLOCK * FRAMES_PER_BUFFER) = data->OLA_signal[i];
+            ola.at(i) = data->OLA_signal[i];
         }
 
         /*plt::figure(10);
         plt::title("Frequency contents, channel 1");
         plt::clf();    
         plt::plot(bins, ch1);
-        plt::xlabel("freq bin");
+        plt::xlabel("freq bin");*/
 
         plt::figure(11);
         plt::title("Frequency contents, lp filter");
@@ -459,7 +458,7 @@ void listen_live()
         plt::plot(bins, lpf);
         plt::xlabel("freq bin");
 
-        plt::figure(12);
+        /*plt::figure(12);
         plt::title("Frequency contents, filter*signal");
         plt::clf();    
         plt::plot(bins, res1);
@@ -477,13 +476,14 @@ void listen_live()
         plt::plot(time, out);
         plt::xlabel("time");
 
-        plt::figure(15);
+        /*plt::figure(15);
         plt::title("OLA signal");
         plt::clf();    
         plt::plot(time2, ola);
-        plt::xlabel("time");
+        plt::xlabel("time");*/
 
-        plt::pause(2.0);
+        plt::pause(2.0);        
+        //plt::show();
 
         //Pa_Sleep(100);
         // plot maximum direction

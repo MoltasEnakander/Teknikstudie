@@ -34,7 +34,7 @@ namespace plt = matplotlibcpp;
 #define MAX_THREADS_PER_BLOCK (1024)
 
 #define NUM_TAPS (49)
-#define NUM_FILTERS (1)
+#define NUM_FILTERS (6)
 #define BANDWIDTH (1000 * 2 / SAMPLE_RATE)
 #define BLOCK_LEN (2048)                                // how long a block will be to store zero padded signals
 #define FRAMES_PER_BUFFER (BLOCK_LEN - NUM_TAPS + 1)    // how many samples to save before callback function is called
