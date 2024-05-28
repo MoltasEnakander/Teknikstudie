@@ -252,7 +252,7 @@ void listen_live()
     {
         //Pa_Sleep(100);
         // plot maximum direction
-        /*plt::figure(1);
+        plt::figure(1);
         plt::title("Max direction plot");
         plt::clf();
         plt::scatter(std::vector<float>{theta[data->thetaID] * 180.0f / (float)M_PI}, std::vector<float>{phi[data->phiID] * 180.0f / (float)M_PI}, 25.0, {{"color", "red"}});
@@ -261,7 +261,7 @@ void listen_live()
         plt::xlabel("theta");
         plt::ylabel("phi");
         plt::grid(true);
-        plt::pause(0.15);*/
+        plt::pause(0.15);
         //printf("theta = %f\n", data->theta );
         //printf("phi = %f\n", data->phi );
         //printf("maxframeindex = %d\n", data->maxFrameIndex );
@@ -280,7 +280,7 @@ void listen_live()
             plt::xlabel("freq bin");
         }
         //plt::show();
-        plt::pause(0.02);
+        plt::pause(0.02);*/
         
 
 
@@ -304,7 +304,7 @@ void listen_live()
         fflush(signal);    
 
         // Display the buffered changes to stdout in the terminal
-        fflush(stdout);*/
+        fflush(stdout);
     }    
 
     // Stop capturing audio

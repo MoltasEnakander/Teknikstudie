@@ -22,6 +22,9 @@ void free_resources(beamformingData* data){
     fftwf_free(data->filtered_data);
     fftwf_free(data->filtered_data_temp);
     fftwf_free(data->OLA_signal);
+    fftwf_free(data->OLA_fft);
+    fftwf_free(data->LP_filter);
+    free(data->OLA_decimated);
 
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
@@ -29,6 +32,8 @@ void free_resources(beamformingData* data){
         for (int j = 0; j < NUM_FILTERS; ++j)
         {
             fftwf_destroy_plan(data->back_plans[i * NUM_FILTERS + j]);
+            fftwf_destroy_plan(data->OLA_forw[i * NUM_FILTERS + j]);
+            fftwf_destroy_plan(data->OLA_back[i * NUM_FILTERS + j]);
         }
         
     }
@@ -40,32 +45,59 @@ void free_resources(beamformingData* data){
 void shift(beamformingData *data, int i){
     // OLA_signal is ordered by channel first, then filter, then blocks
     // shift out previous block and add the newest block at the end
-    int single_OLA_space = (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN;
+    
     for (int j = 0; j < NUM_FILTERS; ++j)
     {
         for (int k = 0; k < NUM_OLA_BLOCK - 1; ++k)
         {
             // shift FRAMES_PER_BUFFER to the left            
-            std::memcpy(&data->OLA_signal[k * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space], \
-                        &data->OLA_signal[(k+1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space], \
+            std::memcpy(&data->OLA_signal[k * FRAMES_PER_BUFFER + j * OLA_LENGTH + i * NUM_FILTERS * OLA_LENGTH], \
+                        &data->OLA_signal[(k+1) * FRAMES_PER_BUFFER + j * OLA_LENGTH + i * NUM_FILTERS * OLA_LENGTH], \
                         FRAMES_PER_BUFFER * sizeof(float));
         }
         int cosine_id = data->cosine_block * FRAMES_PER_BUFFER;
         // shift in last part and add new part
         for (int l = 0; l < BLOCK_LEN - FRAMES_PER_BUFFER; ++l)
         {
-            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] = \
-            data->OLA_signal[l + NUM_OLA_BLOCK * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] + \
-            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN * data->cosines[l + cosine_id + j * OLA_LENGTH]; 
+            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * OLA_LENGTH + i * NUM_FILTERS * OLA_LENGTH] = \
+            data->OLA_signal[l + NUM_OLA_BLOCK * FRAMES_PER_BUFFER + j * OLA_LENGTH + i * NUM_FILTERS * OLA_LENGTH] + \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN * 2.0f * data->cosines[l + cosine_id + j * OLA_LENGTH]; 
             // new block needs to be mult. with a cosine to achieve IQ down-conversion
         }
         for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < BLOCK_LEN; ++l)
         {
-            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] = \
-            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN * data->cosines[l + cosine_id + j * OLA_LENGTH];
+            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * OLA_LENGTH + i * NUM_FILTERS * OLA_LENGTH] = \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN * 2.0f * data->cosines[l + cosine_id + j * OLA_LENGTH];
             // new block needs to be mult. with a cosine to achieve IQ down-conversion
         }
+        fftwf_execute(data->OLA_forw[i * NUM_FILTERS + j]);
     }    
+}
+
+void lpfilter(beamformingData *data, int i){
+    float temp1, temp2;
+    for (int j = 0; j < NUM_FILTERS; ++j)
+    {
+        for (int k = 0; k < OLA_FFT_OUTPUT_SIZE; ++k)
+        {
+            temp1 = data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][0];
+            temp2 = data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][1];
+            data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][0] = temp1 * temp1 - temp2 * temp2;
+            data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][1] = temp1 * temp2 + temp2 * temp1;
+        }
+        fftwf_execute(data->OLA_back[i * NUM_FILTERS + j]);
+    }
+}
+
+void decimate(beamformingData *data, int i)
+{
+    for (int j = 0; j < NUM_FILTERS; ++j)
+    {            
+        for (int k = 0; k < DECIMATED_LENGTH; ++k)
+        {                
+            data->OLA_decimated[k] = data->OLA_signal[k * DECIMATED_STEP + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH];
+        }
+    }
 }
 
 // Checks the return value of a PortAudio function. Logs the message and exits
@@ -86,7 +118,7 @@ static int streamCallback(
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
 )
-{
+{    
     // Cast our input buffer to a float pointer (since our sample format is `paFloat32`)
     float* in = (float*)inputBuffer;
 
@@ -191,17 +223,91 @@ static int streamCallback(
     data->cosine_block++;
     data->cosine_block = data->cosine_block % NUM_OLA_BLOCK;
 
-    for (int i = 0; i < NUM_CHANNELS; ++i)
-    {
+    // apply lp-filter
+    std::thread th17(lpfilter, data, 0);
+    std::thread th18(lpfilter, data, 1);
+    std::thread th19(lpfilter, data, 2);
+    std::thread th20(lpfilter, data, 3);
+    std::thread th21(lpfilter, data, 4);
+    std::thread th22(lpfilter, data, 5);
+    std::thread th23(lpfilter, data, 6);
+    std::thread th24(lpfilter, data, 7);
+    std::thread th25(lpfilter, data, 8);
+    std::thread th26(lpfilter, data, 9);
+    std::thread th27(lpfilter, data, 10);
+    std::thread th28(lpfilter, data, 11);
+    std::thread th29(lpfilter, data, 12);
+    std::thread th30(lpfilter, data, 13);
+    std::thread th31(lpfilter, data, 14);
+    std::thread th32(lpfilter, data, 15);
+
+    th17.join();
+    th18.join();
+    th19.join();
+    th20.join();
+    th21.join();
+    th22.join();
+    th23.join();
+    th24.join();
+    th25.join();
+    th26.join();
+    th27.join();
+    th28.join();
+    th29.join();
+    th30.join();
+    th31.join();
+    th32.join();
+
+    // decimate signals
+    // signals are centered around 0Hz with bandwidth BANDWIDTH, new sample-rate needs to be ~ 2 * BANDWIDTH
+    // downsample by a factor SAMPLE_RATE / (4 * F_C)    
+
+    /*for (int i = 0; i < NUM_CHANNELS; ++i)
+    {        
         for (int j = 0; j < NUM_FILTERS; ++j)
-        {
-            fftwf_execute(data->OLA_forw[i * NUM_FILTERS + j]);
+        {            
+            for (int k = 0; k < DECIMATED_LENGTH; ++k)
+            {                
+                data->OLA_decimated[k] = data->OLA_signal[k * DECIMATED_STEP + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH];
+            }
         }
-    }
+    }*/
 
-    // TODO: Apply lowpass filter
 
-    // TODO: Decimate signals
+    std::thread th33(decimate, data, 0);
+    std::thread th34(decimate, data, 1);
+    std::thread th35(decimate, data, 2);
+    std::thread th36(decimate, data, 3);
+    std::thread th37(decimate, data, 4);
+    std::thread th38(decimate, data, 5);
+    std::thread th39(decimate, data, 6);
+    std::thread th40(decimate, data, 7);
+    std::thread th41(decimate, data, 8);
+    std::thread th42(decimate, data, 9);
+    std::thread th43(decimate, data, 10);
+    std::thread th44(decimate, data, 11);
+    std::thread th45(decimate, data, 12);
+    std::thread th46(decimate, data, 13);
+    std::thread th47(decimate, data, 14);
+    std::thread th48(decimate, data, 15);
+
+    // wait for threads to finish
+    th33.join();
+    th34.join();
+    th35.join();
+    th36.join();
+    th37.join();
+    th38.join();
+    th39.join();
+    th40.join();
+    th41.join();
+    th42.join();
+    th43.join();
+    th44.join();
+    th45.join();
+    th46.join();
+    th47.join();
+    th48.join();
 
 
     end = std::chrono::system_clock::now();
@@ -325,6 +431,13 @@ void listen_live()
         taps.push_back(obj.attr("__float__")().cast<float>());
     }
 
+    py::list res2 = my_func(1, NUM_TAPS, BANDWIDTH); // create the lp filter for use after IQ down-conversion
+    // temporary save state of data
+    std::vector<float> taps2;
+    for (py::handle obj : res2) {  // iterators!
+        taps2.push_back(obj.attr("__float__")().cast<float>());
+    }
+
     // transfer data for real, goal is to get a buffer that looks like (with zero-padded signals):
     // filter1[0], filter1[1], ..., 0, 0, 0, filter2[0], filter2[1], ..., 0, 0, 0
     // -------- BLOCK_LEN samples ---------, -------- BLOCK_LEN samples --------- 
@@ -341,24 +454,41 @@ void listen_live()
     }
     taps.clear();
 
+    float* lpfilter = (float*)malloc(PADDED_OLA_LENGTH * sizeof(float));
+    for (int i = 0; i < PADDED_OLA_LENGTH; ++i)
+    {
+        if (i < NUM_TAPS)
+            lpfilter[i] = taps2[i];
+        else
+            lpfilter[i] = 0.0f; // zero pad filters
+    }
+    taps2.clear();
+
     // apply fft to filters
     data->firfiltersfft = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_FILTERS * sizeof(fftwf_complex));
+    data->LP_filter = (fftwf_complex*)fftwf_malloc(OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
     fftwf_plan filter_plans[NUM_FILTERS];
+    fftwf_plan lp_filter_plan;
     for (int i = 0; i < NUM_FILTERS; ++i) // create the plans for calculating the fft of each filter block
     {
         filter_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &firfilters[i * BLOCK_LEN], &data->firfiltersfft[i * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
     }
+    lp_filter_plan = fftwf_plan_dft_r2c_1d(PADDED_OLA_LENGTH, lpfilter, data->LP_filter, FFTW_ESTIMATE);
 
     for (int i = 0; i < NUM_FILTERS; ++i)
     {
         fftwf_execute(filter_plans[i]);
     }
+    fftwf_execute(lp_filter_plan);
     
     for (int i = 0; i < NUM_FILTERS; ++i)
     {
         fftwf_destroy_plan(filter_plans[i]);
     }
+    fftwf_destroy_plan(lp_filter_plan);
+
     free(firfilters);
+    free(lpfilter);
     printf("FIR filters are created.\n");
 
     printf("Setting up interpolation data.\n");
@@ -378,22 +508,24 @@ void listen_live()
     data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
     data->filtered_data_temp = (float*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
     //data->OLA_signal = (float*)fftwf_malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
-    data->OLA_signal = (float*)fftwf_malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
+    data->OLA_signal = (float*)fftwf_malloc(PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
     data->cosines = (float*)malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_FILTERS * sizeof(float));
+    data->OLA_fft = (fftwf_complex*)fftwf_malloc(NUM_CHANNELS * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
+    data->OLA_decimated = (float*)malloc(DECIMATED_LENGTH * NUM_FILTERS * NUM_CHANNELS * sizeof(float));
 
     /*for (int i = 0; i < (FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS; ++i)
     {
         data->OLA_signal[i] = 0.0f;
     }*/
 
-    std::memset(data->OLA_signal, 0.0f, OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
+    std::memset(data->OLA_signal, 0.0f, PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
 
     for (int i = 0; i < NUM_FILTERS; ++i)
     {
         float f_c = F_C + 2 * F_C * i; 
         for (int j = 0; j < (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++j)
         {
-            data->cosines[j + i * ((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN)] = cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * j);
+            data->cosines[j + i * OLA_LENGTH] = cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * j);
         }
     }
 
@@ -405,14 +537,12 @@ void listen_live()
         {   // for each channel, there are NUM_FILTERS to apply, each application will need BLOCK_LEN spots in the array
             // inverse fft to get back the signal after filtering in freq-domain. each signal will need BLOCK_LEN spots, for each channel input there are NUM_FILTERS filters that have been applied to the input to form NUM_FILTERS nr of outputs
             data->back_plans[i * NUM_FILTERS + j] = fftwf_plan_dft_c2r_1d(BLOCK_LEN, &data->filtered_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], &data->filtered_data_temp[j * BLOCK_LEN + i * BLOCK_LEN * NUM_FILTERS], FFTW_ESTIMATE);
-            data->OLA_forw[i * NUM_FILTERS + j] = fftwf_plan_dft_r2c_1d(OLA_LENGTH, &data->OLA_signal[], &OLA_fft[], FFTW_ESTIMATE);
-            
+            data->OLA_forw[i * NUM_FILTERS + j] = fftwf_plan_dft_r2c_1d(PADDED_OLA_LENGTH, &data->OLA_signal[i * NUM_FILTERS * PADDED_OLA_LENGTH + j * PADDED_OLA_LENGTH], &data->OLA_fft[j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
+            data->OLA_back[i * NUM_FILTERS + j] = fftwf_plan_dft_c2r_1d(PADDED_OLA_LENGTH, &data->OLA_fft[j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE], &data->OLA_signal[i * NUM_FILTERS * PADDED_OLA_LENGTH + j * PADDED_OLA_LENGTH], FFTW_ESTIMATE);
         }
     }
-
-
     
-    printf("Defining stream paramters.\n");
+    printf("Defining stream parameters.\n");
     PaStreamParameters inputParameters;
     memset(&inputParameters, 0, sizeof(inputParameters));
     inputParameters.channelCount = NUM_CHANNELS;
@@ -474,7 +604,7 @@ void listen_live()
             out.at(i) = data->filtered_data_temp[i] / BLOCK_LEN;
         }
 
-        for (int i = 0; i < (NUM_OLA_BLOCK-1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
+        for (int i = 0; i < OLA_LENGTH; ++i)
         {
             ola.at(i) = data->OLA_signal[i];
         }
