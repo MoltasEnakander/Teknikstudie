@@ -16,6 +16,7 @@ void free_resources(beamformingData* data){
     free(data->beta);    
     free(data->beams);    
     free(data->ordbuffer);    
+    free(data->cosines);
     fftwf_free(data->fft_data);
     fftwf_free(data->firfiltersfft);
     fftwf_free(data->filtered_data);
@@ -44,24 +45,25 @@ void shift(beamformingData *data, int i){
     {
         for (int k = 0; k < NUM_OLA_BLOCK - 1; ++k)
         {
-            // shift FRAMES_PER_BUFFER to the left
-            for (int l = 0; l < FRAMES_PER_BUFFER; ++l)
-            {                    
-                data->OLA_signal[l + k * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] = \
-                data->OLA_signal[l + (k+1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space];
-            }
-        }            
+            // shift FRAMES_PER_BUFFER to the left            
+            std::memcpy(&data->OLA_signal[k * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space], \
+                        &data->OLA_signal[(k+1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space], \
+                        FRAMES_PER_BUFFER * sizeof(float));
+        }
+        int cosine_id = data->cosine_block * FRAMES_PER_BUFFER;
         // shift in last part and add new part
         for (int l = 0; l < BLOCK_LEN - FRAMES_PER_BUFFER; ++l)
         {
             data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] = \
             data->OLA_signal[l + NUM_OLA_BLOCK * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] + \
-            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN;
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN * data->cosines[l + cosine_id + j * OLA_LENGTH]; 
+            // new block needs to be mult. with a cosine to achieve IQ down-conversion
         }
         for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < BLOCK_LEN; ++l)
         {
             data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * single_OLA_space + i * NUM_FILTERS * single_OLA_space] = \
-            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN;
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN * data->cosines[l + cosine_id + j * OLA_LENGTH];
+            // new block needs to be mult. with a cosine to achieve IQ down-conversion
         }
     }    
 }
@@ -186,13 +188,27 @@ static int streamCallback(
     th15.join();
     th16.join();
 
-    // transform into frequency domain again and apply IQ decimation
+    data->cosine_block++;
+    data->cosine_block = data->cosine_block % NUM_OLA_BLOCK;
+
+    for (int i = 0; i < NUM_CHANNELS; ++i)
+    {
+        for (int j = 0; j < NUM_FILTERS; ++j)
+        {
+            fftwf_execute(data->OLA_forw[i * NUM_FILTERS + j]);
+        }
+    }
+
+    // TODO: Apply lowpass filter
+
+    // TODO: Decimate signals
+
 
     end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;
 
-    //std::cout << "elapsed: " << elapsed.count() << "s\n";
+    std::cout << "elapsed: " << elapsed.count() << "s\n";
 
     // inverse transform back to time domain    
 
@@ -355,16 +371,30 @@ void listen_live()
     data->beta = calcbeta(data->alpha);
     free(theta); free(phi); free(delay); // free memory which does not have to be allocated anymore
     
+    printf("Setting up buffers.\n");
     data->beams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * NUM_FILTERS * sizeof(float));
     data->ordbuffer = (float*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(float));
     data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
     data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
     data->filtered_data_temp = (float*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
+    //data->OLA_signal = (float*)fftwf_malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
     data->OLA_signal = (float*)fftwf_malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
+    data->cosines = (float*)malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_FILTERS * sizeof(float));
 
-    for (int i = 0; i < (FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS; ++i)
+    /*for (int i = 0; i < (FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS; ++i)
     {
         data->OLA_signal[i] = 0.0f;
+    }*/
+
+    std::memset(data->OLA_signal, 0.0f, OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
+
+    for (int i = 0; i < NUM_FILTERS; ++i)
+    {
+        float f_c = F_C + 2 * F_C * i; 
+        for (int j = 0; j < (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++j)
+        {
+            data->cosines[j + i * ((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN)] = cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * j);
+        }
     }
 
     printf("Creating fft plans.\n");
@@ -375,9 +405,12 @@ void listen_live()
         {   // for each channel, there are NUM_FILTERS to apply, each application will need BLOCK_LEN spots in the array
             // inverse fft to get back the signal after filtering in freq-domain. each signal will need BLOCK_LEN spots, for each channel input there are NUM_FILTERS filters that have been applied to the input to form NUM_FILTERS nr of outputs
             data->back_plans[i * NUM_FILTERS + j] = fftwf_plan_dft_c2r_1d(BLOCK_LEN, &data->filtered_data[i * NUM_FILTERS * FFT_OUTPUT_SIZE + j * FFT_OUTPUT_SIZE], &data->filtered_data_temp[j * BLOCK_LEN + i * BLOCK_LEN * NUM_FILTERS], FFTW_ESTIMATE);
+            data->OLA_forw[i * NUM_FILTERS + j] = fftwf_plan_dft_r2c_1d(OLA_LENGTH, &data->OLA_signal[], &OLA_fft[], FFTW_ESTIMATE);
             
         }
     }
+
+
     
     printf("Defining stream paramters.\n");
     PaStreamParameters inputParameters;
@@ -482,7 +515,7 @@ void listen_live()
         plt::plot(time2, ola);
         plt::xlabel("time");*/
 
-        plt::pause(2.0);        
+        //plt::pause(2.0);
         //plt::show();
 
         //Pa_Sleep(100);

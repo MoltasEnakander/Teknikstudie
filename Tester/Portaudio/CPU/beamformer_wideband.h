@@ -35,15 +35,20 @@ namespace plt = matplotlibcpp;
 
 #define NUM_TAPS (49)
 #define NUM_FILTERS (6)
-#define BANDWIDTH (1000 * 2 / SAMPLE_RATE)
+#define F_C (500)
+#define BANDWIDTH (2 * F_C * 2 / SAMPLE_RATE)
 #define BLOCK_LEN (2048)                                // how long a block will be to store zero padded signals
 #define FRAMES_PER_BUFFER (BLOCK_LEN - NUM_TAPS + 1)    // how many samples to save before callback function is called
+#define OLA_LENGTH (FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN)
 
 #define NUM_OLA_BLOCK (8) // how many blocks to store using overlap-add method before starting to apply FFT:s 
-#define FFT_OUTPUT_SIZE (BLOCK_LEN / 2 + 1)
+#define PADDED_OLA_LENGTH = (NUM_OLA_BLOCK * BLOCK_LEN)
 
-#define sind(x) (sin(fmod((x),360) * M_PI / 180))
-#define cosd(x) (cos(fmod((x),360) * M_PI / 180))
+#define FFT_OUTPUT_SIZE (BLOCK_LEN / 2 + 1)
+#define PADDED_OLA_FFT_OUTPUT_SIZE (PADDED_OLA_LENGTH / 2 + 1)
+
+//#define sind(x) (sin(fmod((x),360) * M_PI / 180))
+//#define cosd(x) (cos(fmod((x),360) * M_PI / 180))
 
 #define C (340.0) // m/s
 #define ARRAY_DIST (0.042) // m
@@ -71,7 +76,11 @@ typedef struct {
 
     float* filtered_data_temp;      // temporary container for the filtered data in the time domain, results will be added to OLA_signal
     float* OLA_signal;              // contains the combined signal for each channel and filter, after construction using overlap-add
-    
+    float* cosines;
+    int cosine_block;
+
+    fftwf_plan OLA_forw[NUM_CHANNELS * NUM_FILTERS];
+    fftwf_complex* OLA_fft;
 } beamformingData;
 
 // positions in the microphone array
