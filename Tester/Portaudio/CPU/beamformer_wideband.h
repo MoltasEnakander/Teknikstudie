@@ -85,7 +85,9 @@ typedef struct {
     fftwf_plan OLA_forw[NUM_CHANNELS * NUM_FILTERS];
     fftwf_plan OLA_back[NUM_CHANNELS * NUM_FILTERS];
     fftwf_complex* OLA_fft;
-    fftwf_complex* LP_filter;
+    fftwf_complex* OLA_fftcopy;
+    fftwf_complex* LP_filter1;
+    //fftwf_complex* LP_filter2;
 
     float* OLA_decimated;
 } beamformingData;

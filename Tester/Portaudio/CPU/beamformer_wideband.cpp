@@ -23,7 +23,9 @@ void free_resources(beamformingData* data){
     fftwf_free(data->filtered_data_temp);
     fftwf_free(data->OLA_signal);
     fftwf_free(data->OLA_fft);
-    fftwf_free(data->LP_filter);
+    fftwf_free(data->OLA_fftcopy);
+    fftwf_free(data->LP_filter1);
+    //fftwf_free(data->LP_filter2);
     free(data->OLA_decimated);
 
     for (int i = 0; i < NUM_CHANNELS; ++i)
@@ -40,7 +42,6 @@ void free_resources(beamformingData* data){
 
     free(data);
 }
-
 
 void shift(beamformingData *data, int i){
     // OLA_signal is ordered by channel first, then filter, then blocks
@@ -75,17 +76,20 @@ void shift(beamformingData *data, int i){
 }
 
 void lpfilter(beamformingData *data, int i){
-    float temp1, temp2;
+    float temp1, temp2, temp3, temp4;
     for (int j = 0; j < NUM_FILTERS; ++j)
     {
         for (int k = 0; k < OLA_FFT_OUTPUT_SIZE; ++k)
         {
             temp1 = data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][0];
             temp2 = data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][1];
-            data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][0] = temp1 * temp1 - temp2 * temp2;
-            data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][1] = temp1 * temp2 + temp2 * temp1;
+            temp3 = data->LP_filter1[k][0];
+            temp4 = data->LP_filter1[k][1];
+
+            data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][0] = temp1 * temp3 - temp2 * temp4;
+            data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][1] = temp1 * temp4 + temp2 * temp3;            
         }
-        fftwf_execute(data->OLA_back[i * NUM_FILTERS + j]);
+        //fftwf_execute(data->OLA_back[i * NUM_FILTERS + j]);
     }
 }
 
@@ -113,11 +117,12 @@ static void checkErr(PaError err, beamformingData* data) {
 // PortAudio stream callback function. Will be called after every
 // FRAMES_PER_BUFFER audio samples PortAudio captures. Used to process the
 // resulting audio sample.
-static int streamCallback(
+/*static int streamCallback(
     const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer,
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
-)
+)*/
+static void callBack(float* inputBuffer, beamformingData* data)
 {    
     // Cast our input buffer to a float pointer (since our sample format is `paFloat32`)
     float* in = (float*)inputBuffer;
@@ -125,7 +130,7 @@ static int streamCallback(
     // We will not be modifying the output buffer. This line is a no-op.
     //(void)outputBuffer;
 
-    beamformingData* data = (beamformingData*)userData;
+    /*beamformingData* data = (beamformingData*)userData;
     
     // keep track of when to stop listening
     int finished;
@@ -140,7 +145,7 @@ static int streamCallback(
     {
         data->frameIndex += framesPerBuffer;
         finished = paContinue;
-    }
+    }*/
 
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
@@ -150,7 +155,8 @@ static int streamCallback(
         for (int j = 0; j < BLOCK_LEN; ++j)
         {
             if (j < FRAMES_PER_BUFFER)
-                data->ordbuffer[i * BLOCK_LEN + j] = in[j * NUM_CHANNELS + i];
+                //data->ordbuffer[i * BLOCK_LEN + j] = in[j * NUM_CHANNELS + i];
+                data->ordbuffer[i * BLOCK_LEN + j] = in[j];
             else
                 data->ordbuffer[i * BLOCK_LEN + j] = 0.0f; // zero-pad 
         }        
@@ -182,7 +188,7 @@ static int streamCallback(
             // there should be (NUM_FILTERS * NUM_CHANNELS) blocks in total
             fftwf_execute(data->back_plans[i * NUM_FILTERS + j]);
         }
-    }    
+    }
     
     // add block to the OLA_signal, divide the work on several threads    
     std::thread th1(shift, data, 0);
@@ -258,23 +264,14 @@ static int streamCallback(
     th31.join();
     th32.join();
 
+    // keep a copy of the fft:s of the OLA signals as data->OLA_fft is ruined after the ifft:s applied to it
+    std::memcpy(data->OLA_fftcopy, data->OLA_fft, NUM_CHANNELS*NUM_FILTERS*OLA_FFT_OUTPUT_SIZE*sizeof(fftwf_complex));
+
     // decimate signals
     // signals are centered around 0Hz with bandwidth BANDWIDTH, new sample-rate needs to be ~ 2 * BANDWIDTH
     // downsample by a factor SAMPLE_RATE / (4 * F_C)    
 
-    /*for (int i = 0; i < NUM_CHANNELS; ++i)
-    {        
-        for (int j = 0; j < NUM_FILTERS; ++j)
-        {            
-            for (int k = 0; k < DECIMATED_LENGTH; ++k)
-            {                
-                data->OLA_decimated[k] = data->OLA_signal[k * DECIMATED_STEP + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH];
-            }
-        }
-    }*/
-
-
-    std::thread th33(decimate, data, 0);
+    /*std::thread th33(decimate, data, 0);
     std::thread th34(decimate, data, 1);
     std::thread th35(decimate, data, 2);
     std::thread th36(decimate, data, 3);
@@ -307,7 +304,7 @@ static int streamCallback(
     th45.join();
     th46.join();
     th47.join();
-    th48.join();
+    th48.join();*/
 
 
     end = std::chrono::system_clock::now();
@@ -356,13 +353,13 @@ static int streamCallback(
     data->thetaID = maxID % int(NUM_VIEWS);
     data->phiID = maxID / int(NUM_VIEWS);*/
 
-    return finished;
+    //return finished;
 }
 
 void listen_live() 
 {
     // Initialize PortAudio
-    PaError err;
+    /*PaError err;
     err = Pa_Initialize();
     checkErr(err, nullptr);
 
@@ -406,7 +403,7 @@ void listen_live()
         exit(EXIT_FAILURE);
     }
 
-    printf("Device = %d\n", device);
+    printf("Device = %d\n", device);*/
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------    
@@ -454,41 +451,52 @@ void listen_live()
     }
     taps.clear();
 
-    float* lpfilter = (float*)malloc(PADDED_OLA_LENGTH * sizeof(float));
+    float* lpfilter1 = (float*)malloc(PADDED_OLA_LENGTH * sizeof(float));
+    //float* lpfilter2 = (float*)malloc(PADDED_OLA_LENGTH * sizeof(float));
     for (int i = 0; i < PADDED_OLA_LENGTH; ++i)
     {
-        if (i < NUM_TAPS)
-            lpfilter[i] = taps2[i];
-        else
-            lpfilter[i] = 0.0f; // zero pad filters
+        if (i < NUM_TAPS){
+            lpfilter1[i] = taps2[i];
+            //lpfilter2[i] = taps3[i];
+        }
+        else{
+            lpfilter1[i] = 0.0f; // zero pad filters
+            //lpfilter2[i] = 0.0f; // zero pad filters
+        }
     }
     taps2.clear();
+    //taps3.clear();
 
     // apply fft to filters
     data->firfiltersfft = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_FILTERS * sizeof(fftwf_complex));
-    data->LP_filter = (fftwf_complex*)fftwf_malloc(OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
+    data->LP_filter1 = (fftwf_complex*)fftwf_malloc(OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
+    //data->LP_filter2 = (fftwf_complex*)fftwf_malloc(OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
     fftwf_plan filter_plans[NUM_FILTERS];
-    fftwf_plan lp_filter_plan;
+    fftwf_plan lp_filter_plan1;//, lp_filter_plan2;
     for (int i = 0; i < NUM_FILTERS; ++i) // create the plans for calculating the fft of each filter block
     {
         filter_plans[i] = fftwf_plan_dft_r2c_1d(BLOCK_LEN, &firfilters[i * BLOCK_LEN], &data->firfiltersfft[i * FFT_OUTPUT_SIZE], FFTW_ESTIMATE);
     }
-    lp_filter_plan = fftwf_plan_dft_r2c_1d(PADDED_OLA_LENGTH, lpfilter, data->LP_filter, FFTW_ESTIMATE);
+    lp_filter_plan1 = fftwf_plan_dft_r2c_1d(PADDED_OLA_LENGTH, lpfilter1, data->LP_filter1, FFTW_ESTIMATE);
+    //lp_filter_plan2 = fftwf_plan_dft_r2c_1d(PADDED_OLA_LENGTH, lpfilter2, data->LP_filter2, FFTW_ESTIMATE);
 
     for (int i = 0; i < NUM_FILTERS; ++i)
     {
         fftwf_execute(filter_plans[i]);
     }
-    fftwf_execute(lp_filter_plan);
+    fftwf_execute(lp_filter_plan1);
+    //fftwf_execute(lp_filter_plan2);
     
     for (int i = 0; i < NUM_FILTERS; ++i)
     {
         fftwf_destroy_plan(filter_plans[i]);
     }
-    fftwf_destroy_plan(lp_filter_plan);
+    fftwf_destroy_plan(lp_filter_plan1);
+    //fftwf_destroy_plan(lp_filter_plan2);
 
     free(firfilters);
-    free(lpfilter);
+    free(lpfilter1);
+    //free(lpfilter2);
     printf("FIR filters are created.\n");
 
     printf("Setting up interpolation data.\n");
@@ -511,12 +519,8 @@ void listen_live()
     data->OLA_signal = (float*)fftwf_malloc(PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
     data->cosines = (float*)malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_FILTERS * sizeof(float));
     data->OLA_fft = (fftwf_complex*)fftwf_malloc(NUM_CHANNELS * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
+    data->OLA_fftcopy = (fftwf_complex*)fftwf_malloc(NUM_CHANNELS * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
     data->OLA_decimated = (float*)malloc(DECIMATED_LENGTH * NUM_FILTERS * NUM_CHANNELS * sizeof(float));
-
-    /*for (int i = 0; i < (FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS; ++i)
-    {
-        data->OLA_signal[i] = 0.0f;
-    }*/
 
     std::memset(data->OLA_signal, 0.0f, PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(float));
 
@@ -541,8 +545,24 @@ void listen_live()
             data->OLA_back[i * NUM_FILTERS + j] = fftwf_plan_dft_c2r_1d(PADDED_OLA_LENGTH, &data->OLA_fft[j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE], &data->OLA_signal[i * NUM_FILTERS * PADDED_OLA_LENGTH + j * PADDED_OLA_LENGTH], FFTW_ESTIMATE);
         }
     }
+
+    // Create test signal, each channel will get the exact same signal for now
+    float* input = (float*)malloc(FRAMES_PER_BUFFER * NUM_OLA_BLOCK * sizeof(float));
+    for (int i = 0; i < FRAMES_PER_BUFFER * NUM_OLA_BLOCK; ++i)
+    {
+        input[i] = cosf(2 * M_PI * 400.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
+                    cosf(2 * M_PI * 2750.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 3400.0f * (1.0f / SAMPLE_RATE) * i);
+    }    
+
+    // run the callback function 8 times
+    for (int i = 0; i < NUM_OLA_BLOCK; ++i)
+    {
+        callBack(&input[i * FRAMES_PER_BUFFER], data);
+    }
+
+    free(input);
     
-    printf("Defining stream parameters.\n");
+    /*printf("Defining stream parameters.\n");
     PaStreamParameters inputParameters;
     memset(&inputParameters, 0, sizeof(inputParameters));
     inputParameters.channelCount = NUM_CHANNELS;
@@ -570,9 +590,9 @@ void listen_live()
     err = Pa_StartStream(stream);
     checkErr(err, data);
 
-    FILE* signal = popen("gnuplot", "w");    
+    FILE* signal = popen("gnuplot", "w");*/
 
-    std::vector<int> bins, time, time2;
+    std::vector<int> bins, ola_bins, time, time2;
     for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
     {
         bins.push_back(i);
@@ -583,37 +603,50 @@ void listen_live()
         time.push_back(i);
     }
 
-    for (int i = 0; i < (NUM_OLA_BLOCK-1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
+    for (int i = 0; i < OLA_LENGTH; ++i)
     {
         time2.push_back(i);
     }
 
-    std::vector<float> ch1(FFT_OUTPUT_SIZE), lpf(FFT_OUTPUT_SIZE), res1(FFT_OUTPUT_SIZE), in(BLOCK_LEN), out(BLOCK_LEN), ola((NUM_OLA_BLOCK-1) * FRAMES_PER_BUFFER + BLOCK_LEN);
-    while( ( err = Pa_IsStreamActive( stream ) ) == 1 )    
-    {        
+    for (int i = 0; i < OLA_FFT_OUTPUT_SIZE; ++i)
+    {
+        ola_bins.push_back(i);
+    }
+
+    int v = 1; // which view you wanna look at for channel 1 (0 = channel 1, filter 1, 7 = channel 2 filter 1?)
+
+    std::vector<float> ch1(FFT_OUTPUT_SIZE), lpf(FFT_OUTPUT_SIZE), res1(FFT_OUTPUT_SIZE), in(BLOCK_LEN), out(BLOCK_LEN), ola(OLA_LENGTH), LP(OLA_FFT_OUTPUT_SIZE), ola_fftcopy(OLA_FFT_OUTPUT_SIZE);
+    //while( ( err = Pa_IsStreamActive( stream ) ) == 1 )    
+    //{        
         for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
         {
-            ch1.at(i) = sqrt(data->fft_data[i][0] * data->fft_data[i][0] + data->fft_data[i][1] * data->fft_data[i][1]);
-            lpf.at(i) = sqrt(data->firfiltersfft[i + FFT_OUTPUT_SIZE][0] * data->firfiltersfft[i + FFT_OUTPUT_SIZE][0] + data->firfiltersfft[i + FFT_OUTPUT_SIZE][1] * data->firfiltersfft[i + FFT_OUTPUT_SIZE][1]);
-            res1.at(i) = sqrt(data->filtered_data[i][0] * data->filtered_data[i][0] + data->filtered_data[i][1] * data->filtered_data[i][1]);
+            ch1.at(i) = sqrt(data->fft_data[i + FFT_OUTPUT_SIZE * v][0] * data->fft_data[i + FFT_OUTPUT_SIZE * v][0] + data->fft_data[i + FFT_OUTPUT_SIZE * v][1] * data->fft_data[i + FFT_OUTPUT_SIZE * v][1]);
+            lpf.at(i) = sqrt(data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][0] * data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][0] + data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][1] * data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][1]);
+            res1.at(i) = sqrt(data->filtered_data[i + FFT_OUTPUT_SIZE * v][0] * data->filtered_data[i + FFT_OUTPUT_SIZE * v][0] + data->filtered_data[i + FFT_OUTPUT_SIZE * v][1] * data->filtered_data[i + FFT_OUTPUT_SIZE * v][1]);
         }
 
         for (int i = 0; i < BLOCK_LEN; ++i)
         {
-            in.at(i) = data->ordbuffer[i];
-            out.at(i) = data->filtered_data_temp[i] / BLOCK_LEN;
+            in.at(i) = data->ordbuffer[i + BLOCK_LEN * v];
+            out.at(i) = data->filtered_data_temp[i + BLOCK_LEN * v] / BLOCK_LEN;
         }
 
         for (int i = 0; i < OLA_LENGTH; ++i)
         {
-            ola.at(i) = data->OLA_signal[i];
+            ola.at(i) = data->OLA_signal[i + OLA_LENGTH * v];
         }
 
-        /*plt::figure(10);
+        for (int i = 0; i < OLA_FFT_OUTPUT_SIZE; ++i)
+        {
+            ola_fftcopy.at(i) = sqrt(data->OLA_fftcopy[i + OLA_FFT_OUTPUT_SIZE * v][0] * data->OLA_fftcopy[i + OLA_FFT_OUTPUT_SIZE * v][0] + data->OLA_fftcopy[i + OLA_FFT_OUTPUT_SIZE * v][1] * data->OLA_fftcopy[i + OLA_FFT_OUTPUT_SIZE * v][1]);
+            LP.at(i) = sqrt(data->LP_filter1[i][0] * data->LP_filter1[i][0] + data->LP_filter1[i][1] * data->LP_filter1[i][1]);
+        }
+
+        plt::figure(10);
         plt::title("Frequency contents, channel 1");
         plt::clf();    
         plt::plot(bins, ch1);
-        plt::xlabel("freq bin");*/
+        plt::xlabel("freq bin");
 
         plt::figure(11);
         plt::title("Frequency contents, lp filter");
@@ -639,14 +672,26 @@ void listen_live()
         plt::plot(time, out);
         plt::xlabel("time");
 
-        /*plt::figure(15);
+        plt::figure(15);
         plt::title("OLA signal");
         plt::clf();    
         plt::plot(time2, ola);
-        plt::xlabel("time");*/
+        plt::xlabel("time");
+
+        plt::figure(16);
+        plt::title("OLA_fft");
+        plt::clf();    
+        plt::plot(ola_bins, ola_fftcopy);
+        plt::xlabel("freq bin");
+
+        plt::figure(17);
+        plt::title("LP_filter");
+        plt::clf();    
+        plt::plot(ola_bins, LP);
+        plt::xlabel("freq bin");
 
         //plt::pause(2.0);
-        //plt::show();
+        plt::show();
 
         //Pa_Sleep(100);
         // plot maximum direction
@@ -703,10 +748,10 @@ void listen_live()
 
         // Display the buffered changes to stdout in the terminal
         fflush(stdout);*/
-    }    
+    //}    
 
     // Stop capturing audio
-    err = Pa_StopStream(stream);
+    /*err = Pa_StopStream(stream);
     checkErr(err, data);
 
     // Close the PortAudio stream
@@ -715,7 +760,7 @@ void listen_live()
 
     // Terminate PortAudio
     err = Pa_Terminate();
-    checkErr(err, data);
+    checkErr(err, data);*/
 
     free_resources(data);
 }
