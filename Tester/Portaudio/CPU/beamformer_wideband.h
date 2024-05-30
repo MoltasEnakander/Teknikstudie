@@ -29,7 +29,7 @@ namespace plt = matplotlibcpp;
 
 #define MIN_VIEW (-60)
 #define MAX_VIEW (60)
-#define VIEW_INTERVAL (5)
+#define VIEW_INTERVAL (10)
 #define NUM_VIEWS ((MAX_VIEW - MIN_VIEW) / VIEW_INTERVAL + 1)
 
 #define MAX_THREADS_PER_BLOCK (1024)
@@ -66,7 +66,7 @@ typedef struct {
     float* beams;                   // magnitude of the beams, stored on the cpu    
     int thetaID[NUM_FILTERS];       // theta index of the strongest beam per frequency block
     int phiID[NUM_FILTERS];         // phi index of the strongest beam per frequency block
-    //float* summedSignals;         // contains a combined timesignal after each channel has been interpolated and the signals have been summed together
+    fftwf_complex* summedSignals;         // contains a combined timesignal after each channel has been interpolated and the signals have been summed together
     fftwf_plan forw_plans[NUM_CHANNELS]; // contains plans for calculating fft:s    
     fftwf_plan back_plans[NUM_CHANNELS * NUM_FILTERS]; // contains plans for calculating inverse fft:s
 
@@ -86,6 +86,7 @@ typedef struct {
 
     fftwf_complex* OLA_decimated;
     int* cosine_counter;
+    fftwf_complex* phase_shifts;
 } beamformingData;
 
 // positions in the microphone array
@@ -95,6 +96,8 @@ static float za[16] = {-1.5f, -1.5f, -0.5f, -0.5f, 0.5f, 0.5f, 1.5f, 1.5f, 1.5f,
 float* linspace(int a, int num);
 
 float* calcDelays(float* theta, float* phi);
+
+fftwf_complex* calcPhaseShifts(float* delay);
 
 /*int* calca(float* delay);
 

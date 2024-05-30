@@ -46,13 +46,11 @@ void shift(beamformingData *data, int i){
     for (int j = 0; j < NUM_FILTERS; ++j)
     {
         f_c = F_C + 2 * F_C * j;
-        //for (int k = 0; k < NUM_OLA_BLOCK - 1; ++k)
-        //{
-            // shift everything FRAMES_PER_BUFFER to the left            
-            std::memcpy(&data->OLA_signal[/*k * FRAMES_PER_BUFFER + */j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH], \
-                        &data->OLA_signal[/*(k+1) * */FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH], \
-                        (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER * sizeof(fftwf_complex));
-        //}
+        // shift everything FRAMES_PER_BUFFER to the left            
+        std::memcpy(&data->OLA_signal[j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH], \
+                    &data->OLA_signal[FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH], \
+                    (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER * sizeof(fftwf_complex));
+
         int cosine_id = data->cosine_block * FRAMES_PER_BUFFER;
         // shift in last part and add new part
         for (int l = 0; l < BLOCK_LEN - FRAMES_PER_BUFFER; ++l) // the beginning of the new, will be overlapped with the end of the previous block
@@ -70,7 +68,7 @@ void shift(beamformingData *data, int i){
         for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < FRAMES_PER_BUFFER; ++l) // the middle of the new block, no overlap
         {
             data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] = \
-            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * 1.0f * \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
             1.0f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->cosine_counter[j + i * NUM_FILTERS]);
             // new block needs to be mult. with a cosine to achieve IQ down-conversion, factor 1.0 since no overlap
             data->cosine_counter[j + i * NUM_FILTERS]++;
@@ -120,8 +118,11 @@ void decimate(beamformingData *data, int i)
     {            
         for (int k = 0; k < DECIMATED_LENGTH; ++k)
         {                
-            data->OLA_decimated[k][0] = data->OLA_signal[k * DECIMATED_STEP + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0];
-            data->OLA_decimated[k][0] = data->OLA_signal[k * DECIMATED_STEP + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][1];
+            data->OLA_decimated[k + j * DECIMATED_LENGTH + i * NUM_FILTERS * DECIMATED_LENGTH][0] = \
+            data->OLA_signal[k * DECIMATED_STEP + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0];
+
+            data->OLA_decimated[k + j * DECIMATED_LENGTH + i * NUM_FILTERS * DECIMATED_LENGTH][1] = \
+            data->OLA_signal[k * DECIMATED_STEP + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][1];
         }
     }
 }
@@ -326,13 +327,45 @@ static void callBack(fftwf_complex* inputBuffer, beamformingData* data)
     th47.join();
     th48.join();*/
 
+    /*float beamstrength; // TODO: beräkna beamstrength
+    for (int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i)
+    {
+        for (int j = 0; j < NUM_FILTERS; ++j) // this ordering is different from all previous loops which is stupid, but it allows me to sum the channels directly
+        {
+            beamstrength = 0.0f;
+            for (int k = 0; k < NUM_CHANNELS; ++k)
+            {
+                for (int l = 0; l < DECIMATED_LENGTH; ++l)
+                {
+                    if (k == 0){ // reset signals
+                        data->summedSignals[l][0] = data->OLA_decimated[l + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][0] * \
+                                                    data->phase_shifts[l + j * DECIMATED_LENGTH + k * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][0] / NUM_CHANNELS;
+                        data->summedSignals[l][1] = data->OLA_decimated[l + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][1] * \
+                                                    data->phase_shifts[l + j * DECIMATED_LENGTH + k * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][1] / NUM_CHANNELS;
+                    }
+                    else{
+                        data->summedSignals[l][0] += data->OLA_decimated[l + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][0] * \
+                                                    data->phase_shifts[l + j * DECIMATED_LENGTH + k * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][0] / NUM_CHANNELS;
+                        data->summedSignals[l][1] += data->OLA_decimated[l + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][1] * \
+                                                    data->phase_shifts[l + j * DECIMATED_LENGTH + k * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][1] / NUM_CHANNELS;
+                    }
+                    if (k == NUM_CHANNELS - 1){
+                        beamstrength += data->summedSignals[l];
+                    }
+                }
+            }
+
+            data->beams[j + i * NUM_FILTERS] = 10 * std::log10(beamstrength); // each view will have NUM_FILTERS beams listening on different frequency bands      
+        }
+    }*/
+
     end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;
 
     std::cout << "elapsed: " << elapsed.count() << "s\n";
 
-    // inverse transform back to time domain    
+    
 
     // beamform
     /*int numBlocks;
@@ -510,14 +543,14 @@ void listen_live()
     free(lpfilter);
     printf("FIR filters are created.\n");
 
-    printf("Setting up interpolation data.\n");
-    /*float* theta = linspace(MIN_VIEW, NUM_VIEWS);
+    printf("Setting up buffers.\n");
+    float* theta = linspace(MIN_VIEW, NUM_VIEWS);
     float* phi = linspace(MIN_VIEW, NUM_VIEWS);
     float* delay = calcDelays(theta, phi);
+    data->phase_shifts = calcPhaseShifts(delay);
     
-    free(theta); free(phi); free(delay); // free memory which does not have to be allocated anymore*/
+    free(theta); free(phi); free(delay); // free memory which does not have to be allocated anymore*/    
     
-    printf("Setting up buffers.\n");
     data->beams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * NUM_FILTERS * sizeof(float));
     data->ordbuffer = (fftwf_complex*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(fftwf_complex));
     data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
@@ -528,8 +561,7 @@ void listen_live()
     data->OLA_fft = (fftwf_complex*)fftwf_malloc(NUM_CHANNELS * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
     data->OLA_decimated = (fftwf_complex*)malloc(DECIMATED_LENGTH * NUM_FILTERS * NUM_CHANNELS * sizeof(fftwf_complex));
     data->cosine_counter = (int*)malloc(NUM_CHANNELS * NUM_FILTERS * sizeof(int));
-
-    //std::fill(data->OLA_signal, data->OLA_signal + PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS, std::complex<float>(0.0f, 0.0f));
+    data->summedSignals = (fftwf_complex*)malloc(DECIMATED_LENGTH * sizeof(fftwf_complex));    
 
     for (int i = 0; i < PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS; ++i)
     {
@@ -704,11 +736,11 @@ void listen_live()
         plt::plot(ola_bins, ola_fft);
         plt::xlabel("freq bin");
 
-        plt::figure(17);
+        /*plt::figure(17);
         plt::title("LP_filter");
         plt::clf();    
         plt::plot(ola_bins, LP);
-        plt::xlabel("freq bin");
+        plt::xlabel("freq bin");*/
 
         //plt::pause(2.0);
         plt::show();
@@ -824,16 +856,39 @@ float* calcDelays(float* theta, float* phi)
     return d;
 }
 
-/*fftwf_complex* calcPhaseShifts(float* delay){
+fftwf_complex* calcPhaseShifts(float* delay){
     // for each lobe (NUM_VIEWS x NUM_VIEWS), there are NUM_CHANNELS * NUM_FILTERS signals to process
     // first up is channel 1, filter 1, e^(-jwt_0), then channel 1, filter 1, e^(jw(t_0 + Ts)), ..., channel 1, filter 1 e^(jw(t_0 + Ts * (N-1))), (N is number of samples the decimated OLA signal contains)
     // then comes channel 1, filter 2, e^(-jwt_0), ...
     // ...
     // for channel 2, filter 1 it becomes e^(-jwt_1) (t_0, t_1, ..., t_(M-1) are given by delay)
     // w is dependent on the filter, w is the original center frequency of the filter applied to the signal f_c = F_C + 2 * F_C * i; 
-    // 
-    fftwf_complex* ps = (fftwf_complex*)malloc(NUM_CHANNELS * NUM_FILTERS * NUM_VIEWS * NUM_VIEWS * sizeof(fftwf_complex));
-}*/
+    //     
+    fftwf_complex* ps = (fftwf_complex*)malloc(NUM_CHANNELS * NUM_FILTERS * NUM_VIEWS * NUM_VIEWS * DECIMATED_LENGTH * sizeof(fftwf_complex));
+
+    float f_c, omega, tau;    
+    for (int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i)
+    {
+        for (int j = 0; j < NUM_CHANNELS; ++j)
+        {
+            for (int k = 0; k < NUM_FILTERS; ++k)
+            {
+                f_c = F_C + k * 2 * F_C;
+                omega = 2.0f * M_PI * f_c;
+                tau = delay[j + i * NUM_CHANNELS]; // for a specific view, the delay is x for channel j
+
+                for (int l = 0; l < DECIMATED_LENGTH; ++l)
+                {
+                    ps[l + k * DECIMATED_LENGTH + j * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][0] = \
+                    cosf(-omega * (tau + l * (1.0f/SAMPLE_RATE) * DECIMATED_STEP));
+
+                    ps[l + k * DECIMATED_LENGTH + j * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][1] = \
+                    sinf(-omega * (tau + l * (1.0f/SAMPLE_RATE) * DECIMATED_STEP));
+                }
+            }        
+        }        
+    }
+}
 
 /*int* calca(float* delay)
 {
