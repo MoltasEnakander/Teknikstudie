@@ -43,7 +43,7 @@ $(EXEC9): main.cpp CPU/beamformer_wideband.cpp
 $(EXEC10): fft-test.cpp
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt -I./lib/AudioFile/include -I./lib/fftw-3.3.10/api -lfftw3f -lm \
-			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft 
+			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft -I./extern/pybind11
 
 $(EXEC11): pybind11test.cpp
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I /usr/include/python3.8/ -lpython3.8 -I./extern/pybind11

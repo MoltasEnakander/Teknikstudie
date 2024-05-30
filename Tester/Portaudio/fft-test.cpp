@@ -14,6 +14,12 @@ namespace plt = matplotlibcpp;
 #include <ctime>
 #include <unistd.h>
 
+#include <include/pybind11/pybind11.h>
+#include <include/pybind11/embed.h>  // python interpreter
+#include <include/pybind11/stl.h>  // type conversion
+
+namespace py = pybind11;
+
 int main()
 {
 	const int FRAMES_PER_BUFFER = 2048;
@@ -26,14 +32,23 @@ int main()
 	const float f = 50.0f;
 	float xt[NUM_CHANNELS][FRAMES_PER_BUFFER];
 	float signal[FRAMES_PER_BUFFER*NUM_CHANNELS];
-	float ordsignal[FRAMES_PER_BUFFER*NUM_CHANNELS];
+	fftwf_complex ordsignal[FRAMES_PER_BUFFER*NUM_CHANNELS];
+
+    int a[12] = {0,0,0,0,1,1,1,1,2,2,2,2};
+
+    std::memcpy(&a[0], &a[4], 8 * sizeof(int));
+
+    for (int i = 0; i < 12; ++i)
+    {
+        printf("%d\n", a[i]);
+    }
 
 	cufftHandle plan1d, planMany;
 	cufftComplex *data1d, *dataMany, *h_fft1d, *h_fftMany;
     cufftReal *d_signal, *d_ordsignal;
     
     fftwf_complex *fft_cpu;
-    float *fftwf_input;
+    fftwf_complex *fftwf_input;
     float *fftwf_output;
     //fftwf_plan p1, p2, p3, p4;
     fftwf_plan plans[NUM_CHANNELS];
@@ -62,7 +77,8 @@ int main()
     {       
         for (int j = 0; j < FRAMES_PER_BUFFER; ++j)
         {                       
-            ordsignal[i * FRAMES_PER_BUFFER + j] = signal[j * NUM_CHANNELS + i];
+            ordsignal[i * FRAMES_PER_BUFFER + j][0] = signal[j * NUM_CHANNELS + i];
+            ordsignal[i * FRAMES_PER_BUFFER + j][1] = 0.0f;
         }        
     }
 
@@ -73,7 +89,7 @@ int main()
     {
     	time.push_back(i * 1.0f / Fs);
     	s1.push_back(xt[0][i]);
-        s2.push_back(ordsignal[i]);
+        //s2.push_back(ordsignal[i]);
     }
 
     // plot signal(s)
@@ -101,24 +117,22 @@ int main()
 	cufftPlan1d(&(plan1d), FRAMES_PER_BUFFER, CUFFT_R2C, NUM_CHANNELS);
     cufftPlanMany(&(planMany), 1, n, inembed, NUM_CHANNELS, 1, onembed, NUM_CHANNELS, 1, CUFFT_R2C, NUM_CHANNELS);*/
 
-    fftwf_input = (float*)fftwf_malloc(FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(float));
-    fftwf_output = (float*)fftwf_malloc((FRAMES_PER_BUFFER + 128) * NUM_CHANNELS * sizeof(float));
+    fftwf_input = (fftwf_complex*)fftwf_malloc(FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(fftwf_complex));
+    //fftwf_output = (float*)fftwf_malloc((FRAMES_PER_BUFFER + 128) * NUM_CHANNELS * sizeof(float));
 
-    memcpy(fftwf_input, ordsignal, FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(float));
+    memcpy(fftwf_input, ordsignal, FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(float));    
 
-    
-
-    fft_cpu = (fftwf_complex*)fftwf_malloc(SINGLE_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
+    fft_cpu = (fftwf_complex*)fftwf_malloc(FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(fftwf_complex));
 
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
-        plans[i] = fftwf_plan_dft_r2c_1d(FRAMES_PER_BUFFER, &fftwf_input[i * FRAMES_PER_BUFFER], &fft_cpu[i * SINGLE_OUTPUT_SIZE], FFTW_ESTIMATE);
+        plans[i] = fftwf_plan_dft_1d(FRAMES_PER_BUFFER, &fftwf_input[i * FRAMES_PER_BUFFER], &fft_cpu[i * SINGLE_OUTPUT_SIZE], FFTW_FORWARD, FFTW_ESTIMATE);
     }
 
-    for (int i = 0; i < NUM_CHANNELS; ++i)
+    /*for (int i = 0; i < NUM_CHANNELS; ++i)
     {
-        bplans[i] = fftwf_plan_dft_c2r_1d(FRAMES_PER_BUFFER, &fft_cpu[i * SINGLE_OUTPUT_SIZE], &fftwf_output[i * (FRAMES_PER_BUFFER+128)], FFTW_ESTIMATE);
-    }
+        bplans[i] = fftwf_plan_dft_1d(FRAMES_PER_BUFFER, &fft_cpu[i * SINGLE_OUTPUT_SIZE], &fftwf_output[i * (FRAMES_PER_BUFFER+128)], FFTW_BACKWARD, FFTW_ESTIMATE);
+    }*/
 
 	// run the fft-calculations    
 
@@ -134,14 +148,50 @@ int main()
     std::vector<float> v_fft_in; 
     for (int i = 0; i < FRAMES_PER_BUFFER; ++i)
     {
-        v_fft_in.push_back(fftwf_input[i]);
+        v_fft_in.push_back(sqrt(fftwf_input[i][0] * fftwf_input[i][0] + fftwf_input[i][1] * fftwf_input[i][1]));
     }
 
-    plt::figure(2);
+    /*plt::figure(2);
     plt::title("Time signal");
     plt::clf();
     plt::plot(time, v_fft_in);
-    plt::xlabel("time (s)");
+    plt::xlabel("time (s)");*/
+
+    py::scoped_interpreter python;
+
+    py::function my_func =
+      py::reinterpret_borrow<py::function>(
+          py::module::import("filtercreation").attr("filtercreation")  
+      );
+
+    //auto scipy = py::module::import("scipy.signal");
+    //py::list res = scipy.attr("firwin")(10, std::vector<float>{0.3f});
+    int ntaps = 49;
+    py::list res = my_func(1, ntaps, 0.05);
+    std::vector<float> taps;
+    for (py::handle obj : res) {  // iterators!
+        taps.push_back(obj.attr("__float__")().cast<float>());
+    }
+
+    
+    fftwf_complex* firfilters = (fftwf_complex*)fftwf_malloc(FRAMES_PER_BUFFER * sizeof(fftwf_complex));
+    fftwf_complex* firfiltersfft = (fftwf_complex*)fftwf_malloc(FRAMES_PER_BUFFER * sizeof(fftwf_complex));
+    for (int j = 0; j < FRAMES_PER_BUFFER; ++j)
+    {
+        if (j < ntaps)
+            firfilters[j][0] = taps[j];        
+        else
+            firfilters[j][0] = 0.0f; // zero pad filters
+        firfilters[j][1] = 0.0f;
+    }    
+    taps.clear();
+
+    fftwf_plan plan;
+    plan = fftwf_plan_dft_1d(FRAMES_PER_BUFFER, firfilters, firfiltersfft, FFTW_BACKWARD, FFTW_ESTIMATE);
+
+    fftwf_execute(plan);
+
+    fftwf_destroy_plan(plan);
         
     
     /*start = std::chrono::system_clock::now();
@@ -177,12 +227,12 @@ int main()
     // create freq bins vector and fft-signal vector(s)
     std::vector<int> bins;
     std::vector<float> c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24;
-    for (int i = 0; i < SINGLE_OUTPUT_SIZE; ++i)
+    for (int i = 0; i < FRAMES_PER_BUFFER; ++i)
     {
     	bins.push_back(i);
 
     	// plan1d data
-    	c1.push_back(sqrt(fft_cpu[i][0] * fft_cpu[i][0] + fft_cpu[i][1] * fft_cpu[i][1]));
+    	c1.push_back(sqrt(firfiltersfft[i][0] * firfiltersfft[i][0] + firfiltersfft[i][1] * firfiltersfft[i][1]));
         //printf("%d: (%f, %f) - abs = %f \n", i, fft_cpu[i][0], fft_cpu[i][1], sqrt(fft_cpu[i][0] * fft_cpu[i][0] + fft_cpu[i][1] * fft_cpu[i][1]) );
     	/*c2.push_back(sqrt(h_fft1d[i + SINGLE_OUTPUT_SIZE].x * h_fft1d[i + SINGLE_OUTPUT_SIZE].x + h_fft1d[i + SINGLE_OUTPUT_SIZE].y * h_fft1d[i + SINGLE_OUTPUT_SIZE].y));
     	c3.push_back(sqrt(h_fft1d[i + SINGLE_OUTPUT_SIZE * 2].x * h_fft1d[i + SINGLE_OUTPUT_SIZE * 2].x + h_fft1d[i + SINGLE_OUTPUT_SIZE * 2].y * h_fft1d[i + SINGLE_OUTPUT_SIZE * 2].y));
@@ -211,22 +261,25 @@ int main()
     
 
     plt::figure(9);
-    plt::title("Time signal after fft");
+    plt::title("Filter");
     plt::clf();
     plt::plot(bins, c1);
     plt::xlabel("bins");
 
-    printf("INvers\n");
+    fftwf_free(firfilters);
+    fftwf_free(firfiltersfft);
+
+    /*printf("INvers\n");
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
         fftwf_execute(bplans[i]);        
-    }
+    }*/
 
     end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed = end-start;
     std::cout << "elapsed: " << elapsed.count() << "s\n";
 
-    for (int i = 0; i < NUM_CHANNELS; ++i)
+    /*for (int i = 0; i < NUM_CHANNELS; ++i)
     {
         for (int j = 0; j < 128; ++j)
         {
@@ -266,7 +319,7 @@ int main()
     for (int i = 0; i < ((OLA_block - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_CHANNELS * NUM_FILTERS; ++i)
     {
         OLA[i] = 0.0f;
-    }
+    }*/
 
     
 
@@ -289,7 +342,7 @@ int main()
         OLA[l + (OLA_block - 1) * FRAMES_PER_BUFFER] = fftwf_output[l] / FRAMES_PER_BUFFER;
     }*/
 
-    printf("Dags för första skift\n");
+    /*printf("Dags för första skift\n");
 
     int single_OLA_space = (OLA_block - 1) * FRAMES_PER_BUFFER + BLOCK_LEN;
     for (int i = 0; i < NUM_CHANNELS; ++i)
@@ -368,7 +421,7 @@ int main()
                 fftwf_output[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN] / BLOCK_LEN;
             }
         }
-    }
+    }*/
     /*for (int k = 0; k < OLA_block - 1; ++k)
     {
         // shift FRAMES_PER_BUFFER to the left
@@ -388,7 +441,7 @@ int main()
     }*/
 
 
-    std::vector<float> s5, s52;
+    /*std::vector<float> s5, s52;
     for (int i = 0; i < (OLA_block - 1) * FRAMES_PER_BUFFER + BLOCK_LEN; ++i)
     {        
         s5.push_back(OLA[i]); 
@@ -405,7 +458,7 @@ int main()
     plt::title("Time signal after fft");
     plt::clf();
     plt::plot(timesg, s52);
-    plt::xlabel("time (s)");
+    plt::xlabel("time (s)");*/
 
     // plot frequency contents of channels
     /*plt::figure(2);

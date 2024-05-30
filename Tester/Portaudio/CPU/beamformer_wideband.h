@@ -7,6 +7,7 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <complex>
 
 #include <portaudio.h> // PortAudio: Used for audio capture
 #include "AudioFile.h"
@@ -44,8 +45,8 @@ namespace plt = matplotlibcpp;
 #define NUM_OLA_BLOCK (8) // how many blocks to store using overlap-add method before starting to apply FFT:s 
 #define PADDED_OLA_LENGTH (NUM_OLA_BLOCK * BLOCK_LEN)
 
-#define FFT_OUTPUT_SIZE (BLOCK_LEN / 2 + 1)
-#define OLA_FFT_OUTPUT_SIZE (PADDED_OLA_LENGTH / 2 + 1)
+#define FFT_OUTPUT_SIZE (BLOCK_LEN)
+#define OLA_FFT_OUTPUT_SIZE (PADDED_OLA_LENGTH)
 
 #define DECIMATED_STEP (int(SAMPLE_RATE / (4 * F_C)))
 #define DECIMATED_LENGTH (int(PADDED_OLA_LENGTH / DECIMATED_STEP))
@@ -60,16 +61,12 @@ namespace plt = matplotlibcpp;
 typedef struct {
     int maxFrameIndex;              // how many frames that should be processed
     int frameIndex;                 // current number of frames that have been processed    
-    float* ordbuffer;               // ordered version of buffer, samples are sorted by channel first, sample id second
+    fftwf_complex* ordbuffer;               // ordered version of buffer, samples are sorted by channel first, sample id second
     
-    float* beams;                   // magnitude of the beams, stored on the cpu
-    int* a;                         // a, b, alpha and beta are used for interpolation
-    int* b;
-    float* alpha;
-    float* beta;    
-    int thetaID;                    // theta index of the strongest beam
-    int phiID;                      // phi index of the strongest beam
-    //float* summedSignals;           // contains a combined timesignal after each channel has been interpolated and the signals have been summed together
+    float* beams;                   // magnitude of the beams, stored on the cpu    
+    int thetaID[NUM_FILTERS];       // theta index of the strongest beam per frequency block
+    int phiID[NUM_FILTERS];         // phi index of the strongest beam per frequency block
+    //float* summedSignals;         // contains a combined timesignal after each channel has been interpolated and the signals have been summed together
     fftwf_plan forw_plans[NUM_CHANNELS]; // contains plans for calculating fft:s    
     fftwf_plan back_plans[NUM_CHANNELS * NUM_FILTERS]; // contains plans for calculating inverse fft:s
 
@@ -77,19 +74,18 @@ typedef struct {
     fftwf_complex* firfiltersfft;   // fft of the filters
     fftwf_complex* filtered_data;   // result of the pointwise multiplication
 
-    float* filtered_data_temp;      // temporary container for the filtered data in the time domain, results will be added to OLA_signal
-    float* OLA_signal;              // contains the combined signal for each channel and filter, after construction using overlap-add
+    fftwf_complex* filtered_data_temp;      // temporary container for the filtered data in the time domain, results will be added to OLA_signal
+    fftwf_complex* OLA_signal;              // contains the combined signal for each channel and filter, after construction using overlap-add
     float* cosines;
     int cosine_block;
 
     fftwf_plan OLA_forw[NUM_CHANNELS * NUM_FILTERS];
     fftwf_plan OLA_back[NUM_CHANNELS * NUM_FILTERS];
-    fftwf_complex* OLA_fft;
-    fftwf_complex* OLA_fftcopy;
-    fftwf_complex* LP_filter1;
-    //fftwf_complex* LP_filter2;
+    fftwf_complex* OLA_fft;    
+    fftwf_complex* LP_filter;    
 
-    float* OLA_decimated;
+    fftwf_complex* OLA_decimated;
+    //int* cosine_counter;
 } beamformingData;
 
 // positions in the microphone array
@@ -100,13 +96,14 @@ float* linspace(int a, int num);
 
 float* calcDelays(float* theta, float* phi);
 
-int* calca(float* delay);
+/*int* calca(float* delay);
 
 int* calcb(int* a);
 
 float* calcalpha(float* delay, int* b);
 
-float* calcbeta(float* alpha);
+float* calcbeta(float* alpha);*/
+
 
 void listen_live();
 

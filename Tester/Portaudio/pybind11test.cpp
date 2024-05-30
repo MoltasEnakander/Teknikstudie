@@ -54,7 +54,7 @@ int main() {
 
     //auto scipy = py::module::import("scipy.signal");
     //py::list res = scipy.attr("firwin")(10, std::vector<float>{0.3f});
-    py::list res = my_func(3, 9, 0.05);
+    py::list res = my_func(1, 9, 0.05);
     for (py::handle obj : res) {  // iterators!
         std::cout << "  - " << res[0].attr("__float__")().cast<float>() << std::endl;
     }
