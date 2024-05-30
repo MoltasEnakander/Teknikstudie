@@ -12,7 +12,8 @@ void free_resources(beamformingData* data){
     //free(data->summedSignals);
     free(data->beams);    
     free(data->ordbuffer);    
-    free(data->cosines);
+    //free(data->cosines);
+    free(data->cosine_counter);
     fftwf_free(data->fft_data);
     fftwf_free(data->firfiltersfft);
     fftwf_free(data->filtered_data);
@@ -40,9 +41,11 @@ void free_resources(beamformingData* data){
 void shift(beamformingData *data, int i){
     // OLA_signal is ordered by channel first, then filter, then blocks
     // shift out previous block and add the newest block at the end
-    
+    float f_c;
+
     for (int j = 0; j < NUM_FILTERS; ++j)
     {
+        f_c = F_C + 2 * F_C * j;
         //for (int k = 0; k < NUM_OLA_BLOCK - 1; ++k)
         //{
             // shift everything FRAMES_PER_BUFFER to the left            
@@ -52,21 +55,45 @@ void shift(beamformingData *data, int i){
         //}
         int cosine_id = data->cosine_block * FRAMES_PER_BUFFER;
         // shift in last part and add new part
-        for (int l = 0; l < BLOCK_LEN - FRAMES_PER_BUFFER; ++l)
+        for (int l = 0; l < BLOCK_LEN - FRAMES_PER_BUFFER; ++l) // the beginning of the new, will be overlapped with the end of the previous block
         {
             data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] = \
             data->OLA_signal[l + NUM_OLA_BLOCK * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] + \
-            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * 2.0f * data->cosines[l + cosine_id + j * OLA_LENGTH]; 
-            // new block needs to be mult. with a cosine to achieve IQ down-conversion
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
+            0.5f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->cosine_counter[j + i * NUM_FILTERS]);
+            // new block needs to be mult. with a cosine to achieve IQ down-conversion, factor 0.5 since it will be overlapped with another part that also has factor 0.5
+            data->cosine_counter[j + i * NUM_FILTERS]++;
+            if (data->cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
+                data->cosine_counter[j + i * NUM_FILTERS] = 0;
+            
         }
-        for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < BLOCK_LEN; ++l)
+        for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < FRAMES_PER_BUFFER; ++l) // the middle of the new block, no overlap
         {
             data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] = \
-            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * 2.0f * data->cosines[l + cosine_id + j * OLA_LENGTH];
-            // new block needs to be mult. with a cosine to achieve IQ down-conversion
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * 1.0f * \
+            1.0f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->cosine_counter[j + i * NUM_FILTERS]);
+            // new block needs to be mult. with a cosine to achieve IQ down-conversion, factor 1.0 since no overlap
+            data->cosine_counter[j + i * NUM_FILTERS]++;
+            if (data->cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
+                data->cosine_counter[j + i * NUM_FILTERS] = 0;
+        }
+        for (int l = FRAMES_PER_BUFFER; l < BLOCK_LEN; ++l) // the end of the new block, will be overlapped with the beginning of the next block
+        {
+            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] = \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
+            0.5f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->cosine_counter[j + i * NUM_FILTERS]);
+            // new block needs to be mult. with a cosine to achieve IQ down-conversion, factor 0.5 for previously stated reason
+            data->cosine_counter[j + i * NUM_FILTERS]++;
+            if (data->cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
+                data->cosine_counter[j + i * NUM_FILTERS] = 0;
+        }
+        data->cosine_counter[j + i * NUM_FILTERS] -= (BLOCK_LEN - FRAMES_PER_BUFFER);
+        if (data->cosine_counter[j + i * NUM_FILTERS] < 0)
+        {
+            data->cosine_counter[j + i * NUM_FILTERS] += (int)SAMPLE_RATE; 
         }
         fftwf_execute(data->OLA_forw[i * NUM_FILTERS + j]);
-    }    
+    }
 }
 
 void lpfilter(beamformingData *data, int i){
@@ -497,9 +524,10 @@ void listen_live()
     data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
     data->filtered_data_temp = (fftwf_complex*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
     data->OLA_signal = (fftwf_complex*)fftwf_malloc(PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
-    data->cosines = (float*)malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_FILTERS * sizeof(float));
+    //data->cosines = (float*)malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_FILTERS * sizeof(float));
     data->OLA_fft = (fftwf_complex*)fftwf_malloc(NUM_CHANNELS * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
     data->OLA_decimated = (fftwf_complex*)malloc(DECIMATED_LENGTH * NUM_FILTERS * NUM_CHANNELS * sizeof(fftwf_complex));
+    data->cosine_counter = (int*)malloc(NUM_CHANNELS * NUM_FILTERS * sizeof(int));
 
     //std::fill(data->OLA_signal, data->OLA_signal + PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS, std::complex<float>(0.0f, 0.0f));
 
@@ -509,14 +537,19 @@ void listen_live()
         data->OLA_signal[i][1] = 0.0f;
     }
 
-    for (int i = 0; i < NUM_FILTERS; ++i)
+    for (int i = 0; i < NUM_FILTERS * NUM_CHANNELS; ++i)
+    {
+        data->cosine_counter[i] = 0;
+    }
+
+    /*for (int i = 0; i < NUM_FILTERS; ++i)
     {
         float f_c = F_C + 2 * F_C * i; 
         for (int j = 0; j < OLA_LENGTH; ++j)
         {
             data->cosines[j + i * OLA_LENGTH] = cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * j);
         }
-    }
+    }*/
 
     printf("Creating fft plans.\n");
     for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block

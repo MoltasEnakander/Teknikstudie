@@ -76,7 +76,7 @@ typedef struct {
 
     fftwf_complex* filtered_data_temp;      // temporary container for the filtered data in the time domain, results will be added to OLA_signal
     fftwf_complex* OLA_signal;              // contains the combined signal for each channel and filter, after construction using overlap-add
-    float* cosines;
+    //float* cosines;
     int cosine_block;
 
     fftwf_plan OLA_forw[NUM_CHANNELS * NUM_FILTERS];
@@ -85,7 +85,7 @@ typedef struct {
     fftwf_complex* LP_filter;    
 
     fftwf_complex* OLA_decimated;
-    //int* cosine_counter;
+    int* cosine_counter;
 } beamformingData;
 
 // positions in the microphone array
