@@ -9,11 +9,10 @@
 
 void free_resources(beamformingData* data){
     // free allocated memory    
-    //free(data->summedSignals);
     free(data->beams);    
-    free(data->ordbuffer);    
-    //free(data->cosines);
-    free(data->cosine_counter);
+    free(data->ordbuffer);        
+    free(data->summedSignals);
+    free(data->sine_cosine_counter);
     fftwf_free(data->fft_data);
     fftwf_free(data->firfiltersfft);
     fftwf_free(data->filtered_data);
@@ -22,6 +21,7 @@ void free_resources(beamformingData* data){
     fftwf_free(data->OLA_fft);
     fftwf_free(data->LP_filter);    
     free(data->OLA_decimated);
+    free(data->phase_shifts);
 
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
@@ -51,44 +51,57 @@ void shift(beamformingData *data, int i){
                     &data->OLA_signal[FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH], \
                     (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER * sizeof(fftwf_complex));
 
-        int cosine_id = data->cosine_block * FRAMES_PER_BUFFER;
+        
         // shift in last part and add new part
         for (int l = 0; l < BLOCK_LEN - FRAMES_PER_BUFFER; ++l) // the beginning of the new, will be overlapped with the end of the previous block
         {
             data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] = \
             data->OLA_signal[l + NUM_OLA_BLOCK * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] + \
             data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
-            0.5f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->cosine_counter[j + i * NUM_FILTERS]);
-            // new block needs to be mult. with a cosine to achieve IQ down-conversion, factor 0.5 since it will be overlapped with another part that also has factor 0.5
-            data->cosine_counter[j + i * NUM_FILTERS]++;
-            if (data->cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
-                data->cosine_counter[j + i * NUM_FILTERS] = 0;
+            1.0f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->sine_cosine_counter[j + i * NUM_FILTERS]);
+
+            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][1] = \
+            data->OLA_signal[l + NUM_OLA_BLOCK * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] + \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
+            -1.0f * sinf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->sine_cosine_counter[j + i * NUM_FILTERS]);
+            // new block needs to be mult. with sine and cosine to achieve IQ down-conversion, factor 0.5 since it will be overlapped with another part that also has factor 0.5
+            data->sine_cosine_counter[j + i * NUM_FILTERS]++;
+            if (data->sine_cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
+                data->sine_cosine_counter[j + i * NUM_FILTERS] = 0;
             
         }
         for (int l = BLOCK_LEN - FRAMES_PER_BUFFER; l < FRAMES_PER_BUFFER; ++l) // the middle of the new block, no overlap
         {
             data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] = \
             data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
-            1.0f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->cosine_counter[j + i * NUM_FILTERS]);
-            // new block needs to be mult. with a cosine to achieve IQ down-conversion, factor 1.0 since no overlap
-            data->cosine_counter[j + i * NUM_FILTERS]++;
-            if (data->cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
-                data->cosine_counter[j + i * NUM_FILTERS] = 0;
+            2.0f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->sine_cosine_counter[j + i * NUM_FILTERS]);
+
+            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][1] = \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
+            -2.0f * sinf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->sine_cosine_counter[j + i * NUM_FILTERS]);
+            // new block needs to be mult. with sine and cosine to achieve IQ down-conversion, factor 1.0 since no overlap
+            data->sine_cosine_counter[j + i * NUM_FILTERS]++;
+            if (data->sine_cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
+                data->sine_cosine_counter[j + i * NUM_FILTERS] = 0;
         }
         for (int l = FRAMES_PER_BUFFER; l < BLOCK_LEN; ++l) // the end of the new block, will be overlapped with the beginning of the next block
         {
             data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][0] = \
             data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
-            0.5f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->cosine_counter[j + i * NUM_FILTERS]);
-            // new block needs to be mult. with a cosine to achieve IQ down-conversion, factor 0.5 for previously stated reason
-            data->cosine_counter[j + i * NUM_FILTERS]++;
-            if (data->cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
-                data->cosine_counter[j + i * NUM_FILTERS] = 0;
+            1.0f * cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->sine_cosine_counter[j + i * NUM_FILTERS]);
+
+            data->OLA_signal[l + (NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][1] = \
+            data->filtered_data_temp[l + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN][0] / BLOCK_LEN * \
+            -1.0f * sinf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * data->sine_cosine_counter[j + i * NUM_FILTERS]);
+            // new block needs to be mult. with sine and cosine to achieve IQ down-conversion, factor 0.5 for previously stated reason
+            data->sine_cosine_counter[j + i * NUM_FILTERS]++;
+            if (data->sine_cosine_counter[j + i * NUM_FILTERS] >= (int)SAMPLE_RATE)
+                data->sine_cosine_counter[j + i * NUM_FILTERS] = 0;
         }
-        data->cosine_counter[j + i * NUM_FILTERS] -= (BLOCK_LEN - FRAMES_PER_BUFFER);
-        if (data->cosine_counter[j + i * NUM_FILTERS] < 0)
+        data->sine_cosine_counter[j + i * NUM_FILTERS] -= (BLOCK_LEN - FRAMES_PER_BUFFER);
+        if (data->sine_cosine_counter[j + i * NUM_FILTERS] < 0)
         {
-            data->cosine_counter[j + i * NUM_FILTERS] += (int)SAMPLE_RATE; 
+            data->sine_cosine_counter[j + i * NUM_FILTERS] += (int)SAMPLE_RATE; 
         }
         fftwf_execute(data->OLA_forw[i * NUM_FILTERS + j]);
     }
@@ -108,11 +121,11 @@ void lpfilter(beamformingData *data, int i){
             data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][0] = temp1 * temp3 - temp2 * temp4;
             data->OLA_fft[k + j * OLA_FFT_OUTPUT_SIZE + i * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE][1] = temp1 * temp4 + temp2 * temp3;            
         }
-        //fftwf_execute(data->OLA_back[i * NUM_FILTERS + j]);
+        fftwf_execute(data->OLA_back[i * NUM_FILTERS + j]);
     }
 }
 
-void decimate(beamformingData *data, int i)
+/*void decimate(beamformingData *data, int i)
 {
     for (int j = 0; j < NUM_FILTERS; ++j)
     {            
@@ -125,7 +138,7 @@ void decimate(beamformingData *data, int i)
             data->OLA_signal[k * DECIMATED_STEP + j * PADDED_OLA_LENGTH + i * NUM_FILTERS * PADDED_OLA_LENGTH][1];
         }
     }
-}
+}*/
 
 // Checks the return value of a PortAudio function. Logs the message and exits
 // if there was an error
@@ -248,13 +261,10 @@ static void callBack(fftwf_complex* inputBuffer, beamformingData* data)
     th13.join();
     th14.join();
     th15.join();
-    th16.join();
-
-    data->cosine_block++;
-    data->cosine_block = data->cosine_block % NUM_OLA_BLOCK;
+    th16.join();    
 
     // apply lp-filter
-    /*std::thread th17(lpfilter, data, 0);
+    std::thread th17(lpfilter, data, 0);
     std::thread th18(lpfilter, data, 1);
     std::thread th19(lpfilter, data, 2);
     std::thread th20(lpfilter, data, 3);
@@ -286,7 +296,7 @@ static void callBack(fftwf_complex* inputBuffer, beamformingData* data)
     th29.join();
     th30.join();
     th31.join();
-    th32.join();*/
+    th32.join();
 
     // decimate signals
     // signals are centered around 0Hz with bandwidth BANDWIDTH, new sample-rate needs to be ~ 2 * BANDWIDTH
@@ -327,7 +337,7 @@ static void callBack(fftwf_complex* inputBuffer, beamformingData* data)
     th47.join();
     th48.join();*/
 
-    /*float beamstrength; // TODO: beräkna beamstrength
+    float beamstrength; // TODO: beräkna beamstrength    
     for (int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i)
     {
         for (int j = 0; j < NUM_FILTERS; ++j) // this ordering is different from all previous loops which is stupid, but it allows me to sum the channels directly
@@ -338,72 +348,32 @@ static void callBack(fftwf_complex* inputBuffer, beamformingData* data)
                 for (int l = 0; l < DECIMATED_LENGTH; ++l)
                 {
                     if (k == 0){ // reset signals
-                        data->summedSignals[l][0] = data->OLA_decimated[l + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][0] * \
+                        data->summedSignals[l][0] = data->OLA_signal[l * DECIMATED_STEP + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][0] / PADDED_OLA_LENGTH * \
                                                     data->phase_shifts[l + j * DECIMATED_LENGTH + k * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][0] / NUM_CHANNELS;
-                        data->summedSignals[l][1] = data->OLA_decimated[l + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][1] * \
+                        data->summedSignals[l][1] = data->OLA_signal[l * DECIMATED_STEP + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][1] / PADDED_OLA_LENGTH * \
                                                     data->phase_shifts[l + j * DECIMATED_LENGTH + k * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][1] / NUM_CHANNELS;
                     }
                     else{
-                        data->summedSignals[l][0] += data->OLA_decimated[l + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][0] * \
+                        data->summedSignals[l][0] += data->OLA_signal[l * DECIMATED_STEP + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][0] / PADDED_OLA_LENGTH * \
                                                     data->phase_shifts[l + j * DECIMATED_LENGTH + k * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][0] / NUM_CHANNELS;
-                        data->summedSignals[l][1] += data->OLA_decimated[l + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][1] * \
+                        data->summedSignals[l][1] += data->OLA_signal[l * DECIMATED_STEP + k * DECIMATED_LENGTH * NUM_FILTERS + j * DECIMATED_LENGTH][1] / PADDED_OLA_LENGTH * \
                                                     data->phase_shifts[l + j * DECIMATED_LENGTH + k * NUM_FILTERS * DECIMATED_LENGTH + i * NUM_CHANNELS * NUM_FILTERS * DECIMATED_LENGTH][1] / NUM_CHANNELS;
                     }
                     if (k == NUM_CHANNELS - 1){
-                        beamstrength += data->summedSignals[l];
+                        beamstrength += sqrt(data->summedSignals[l][0] * data->summedSignals[l][0] + data->summedSignals[l][1] * data->summedSignals[l][1]);
                     }
                 }
             }
 
             data->beams[j + i * NUM_FILTERS] = 10 * std::log10(beamstrength); // each view will have NUM_FILTERS beams listening on different frequency bands      
         }
-    }*/
+    }
 
     end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;
 
     std::cout << "elapsed: " << elapsed.count() << "s\n";
-
-    
-
-    // beamform
-    /*int numBlocks;
-    dim3 threadsPerBlock;
-    if (NUM_VIEWS * NUM_VIEWS > MAX_THREADS_PER_BLOCK){
-        numBlocks = (NUM_VIEWS * NUM_VIEWS) % MAX_THREADS_PER_BLOCK + 1;
-        threadsPerBlock = dim3(MAX_THREADS_PER_BLOCK);
-    }
-    else{
-        numBlocks = 1;
-        threadsPerBlock = dim3(NUM_VIEWS * NUM_VIEWS);
-    }
-    std::chrono::time_point<std::chrono::system_clock> start, end;
-    start = std::chrono::system_clock::now();
-    beamforming<<<numBlocks, threadsPerBlock>>>(data->buffer, data->d_beams, data->a, data->b, data->alpha, data->beta, data->summedSignals);
-    cudaDeviceSynchronize();
-    end = std::chrono::system_clock::now();
-
-    std::chrono::duration<double> elapsed = end-start;
-
-    std::cout << "elapsed: " << elapsed.count() << "s\n";
-
-    cudaMemcpy(data->h_beams, data->d_beams, NUM_VIEWS*NUM_VIEWS*sizeof(float), cudaMemcpyDeviceToHost);
-
-    int maxID = 0;
-    float maxVal = data->h_beams[0];
-
-    for (int i = 1; i < NUM_VIEWS * NUM_VIEWS; i++)
-    {
-        if (maxVal < data->h_beams[i]){
-            maxID = i;
-            maxVal = data->h_beams[i];
-        }        
-    }
-
-    // convert 1d index to 2d index
-    data->thetaID = maxID % int(NUM_VIEWS);
-    data->phiID = maxID / int(NUM_VIEWS);*/
 
     //return finished;
 }
@@ -553,15 +523,14 @@ void listen_live()
     
     data->beams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * NUM_FILTERS * sizeof(float));
     data->ordbuffer = (fftwf_complex*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(fftwf_complex));
+    data->summedSignals = (fftwf_complex*)malloc(DECIMATED_LENGTH * sizeof(fftwf_complex));
     data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
     data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
     data->filtered_data_temp = (fftwf_complex*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
-    data->OLA_signal = (fftwf_complex*)fftwf_malloc(PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));
-    //data->cosines = (float*)malloc(((NUM_OLA_BLOCK - 1) * FRAMES_PER_BUFFER + BLOCK_LEN) * NUM_FILTERS * sizeof(float));
+    data->OLA_signal = (fftwf_complex*)fftwf_malloc(PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS * sizeof(fftwf_complex));    
     data->OLA_fft = (fftwf_complex*)fftwf_malloc(NUM_CHANNELS * NUM_FILTERS * OLA_FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
     data->OLA_decimated = (fftwf_complex*)malloc(DECIMATED_LENGTH * NUM_FILTERS * NUM_CHANNELS * sizeof(fftwf_complex));
-    data->cosine_counter = (int*)malloc(NUM_CHANNELS * NUM_FILTERS * sizeof(int));
-    data->summedSignals = (fftwf_complex*)malloc(DECIMATED_LENGTH * sizeof(fftwf_complex));    
+    data->sine_cosine_counter = (int*)malloc(NUM_CHANNELS * NUM_FILTERS * sizeof(int));
 
     for (int i = 0; i < PADDED_OLA_LENGTH * NUM_CHANNELS * NUM_FILTERS; ++i)
     {
@@ -569,18 +538,11 @@ void listen_live()
         data->OLA_signal[i][1] = 0.0f;
     }
 
-    for (int i = 0; i < NUM_FILTERS * NUM_CHANNELS; ++i)
-    {
-        data->cosine_counter[i] = 0;
-    }
+    std::memset(data->sine_cosine_counter, 0, NUM_FILTERS * NUM_CHANNELS * sizeof(int));
 
-    /*for (int i = 0; i < NUM_FILTERS; ++i)
+    /*for (int i = 0; i < NUM_FILTERS * NUM_CHANNELS; ++i)
     {
-        float f_c = F_C + 2 * F_C * i; 
-        for (int j = 0; j < OLA_LENGTH; ++j)
-        {
-            data->cosines[j + i * OLA_LENGTH] = cosf(2.0f * M_PI * f_c * (1.0f/SAMPLE_RATE) * j);
-        }
+        data->sine_cosine_counter[i] = 0;
     }*/
 
     printf("Creating fft plans.\n");
@@ -600,7 +562,7 @@ void listen_live()
     fftwf_complex* input = (fftwf_complex*)malloc(FRAMES_PER_BUFFER * NUM_OLA_BLOCK * sizeof(fftwf_complex));
     for (int i = 0; i < FRAMES_PER_BUFFER * NUM_OLA_BLOCK; ++i)
     {
-        input[i][0] = cosf(2 * M_PI * 520.0f * (1.0f / SAMPLE_RATE) * i);// + 0.f*cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
+        input[i][0] = cosf(2 * M_PI * 520.0f * (1.0f / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
                     cosf(2 * M_PI * 2750.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 3400.0f * (1.0f / SAMPLE_RATE) * i);
         input[i][1] = 0.0f;
     }    
@@ -639,9 +601,9 @@ void listen_live()
 
     // Begin capturing audio
     err = Pa_StartStream(stream);
-    checkErr(err, data);
+    checkErr(err, data);*/
 
-    FILE* signal = popen("gnuplot", "w");*/
+    FILE* signal = popen("gnuplot", "w");
 
     std::vector<int> bins, ola_bins, time, time2;
     for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
@@ -672,9 +634,7 @@ void listen_live()
         for (int i = 0; i < FFT_OUTPUT_SIZE; ++i)
         {
             ch1.at(i) = sqrt(data->fft_data[i + FFT_OUTPUT_SIZE * v][0] * data->fft_data[i + FFT_OUTPUT_SIZE * v][0] + data->fft_data[i + FFT_OUTPUT_SIZE * v][1] * data->fft_data[i + FFT_OUTPUT_SIZE * v][1]);
-            lpf.at(i) = sqrt(data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][0] * data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][0] + data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][1] * data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][1]);
-            res1.at(i) = sqrt(data->filtered_data[i + FFT_OUTPUT_SIZE * v][0] * data->filtered_data[i + FFT_OUTPUT_SIZE * v][0] + data->filtered_data[i + FFT_OUTPUT_SIZE * v][1] * data->filtered_data[i + FFT_OUTPUT_SIZE * v][1]);
-            //printf("Block i: %f\n", data->filtered_data_temp[i][1]);
+            lpf.at(i) = sqrt(data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][0] * data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][0] + data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][1] * data->firfiltersfft[i + FFT_OUTPUT_SIZE * v][1]);           
         }
 
         for (int i = 0; i < BLOCK_LEN; ++i)
@@ -685,7 +645,7 @@ void listen_live()
 
         for (int i = 0; i < OLA_LENGTH; ++i)
         {
-            ola.at(i) = data->OLA_signal[i + OLA_LENGTH * v][0];            
+            ola.at(i) = data->OLA_signal[i + OLA_LENGTH * v][0] / PADDED_OLA_LENGTH;            
         }
 
         for (int i = 0; i < OLA_FFT_OUTPUT_SIZE; ++i)
@@ -706,44 +666,38 @@ void listen_live()
         plt::plot(bins, lpf);
         plt::xlabel("freq bin");
 
-        /*plt::figure(12);
-        plt::title("Frequency contents, filter*signal");
-        plt::clf();    
-        plt::plot(bins, res1);
-        plt::xlabel("freq bin");*/
-
-        plt::figure(13);
+        plt::figure(12);
         plt::title("In signal");
         plt::clf();    
         plt::plot(time, in);
         plt::xlabel("time");
 
-        plt::figure(14);
+        plt::figure(13);
         plt::title("Out signal");
         plt::clf();    
         plt::plot(time, out);
         plt::xlabel("time");
 
-        plt::figure(15);
+        plt::figure(14);
         plt::title("OLA signal");
         plt::clf();    
         plt::plot(time2, ola);
         plt::xlabel("time");
 
-        plt::figure(16);
+        plt::figure(15);
         plt::title("OLA_fft");
         plt::clf();    
         plt::plot(ola_bins, ola_fft);
         plt::xlabel("freq bin");
 
-        /*plt::figure(17);
+        /*plt::figure(16);
         plt::title("LP_filter");
         plt::clf();    
         plt::plot(ola_bins, LP);
         plt::xlabel("freq bin");*/
 
         //plt::pause(2.0);
-        plt::show();
+        
 
         //Pa_Sleep(100);
         // plot maximum direction
@@ -775,7 +729,7 @@ void listen_live()
             plt::xlabel("freq bin");
         }
         //plt::show();
-        plt::pause(0.02);
+        plt::pause(0.02);*/
         
 
 
@@ -789,17 +743,19 @@ void listen_live()
         
         for(int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i)    
         {
-            fprintf(signal, "%f ", data->h_beams[i]);
+            fprintf(signal, "%f ", data->beams[i]);
             if ((i+1) % NUM_VIEWS == 0)
                 fprintf(signal, "\n");
         }
         
         fprintf(signal, "e\n");
         fprintf(signal, "e\n");
-        fflush(signal);    
+        //fflush(signal);    
 
         // Display the buffered changes to stdout in the terminal
-        fflush(stdout);*/
+        //fflush(stdout);
+
+        plt::show();
     //}    
 
     // Stop capturing audio
@@ -888,44 +844,5 @@ fftwf_complex* calcPhaseShifts(float* delay){
             }        
         }        
     }
+    return ps;
 }
-
-/*int* calca(float* delay)
-{
-    int* a = (int*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int));
-    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
-    {
-        a[i] = floor(delay[i]);
-    }
-    return a;
-}
-
-int* calcb(int* a)
-{
-    int* b = (int*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int));
-    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
-    {
-        b[i] = a[i] + 1;
-    }
-    return b;
-}
-
-float* calcalpha(float* delay, int* b)
-{
-    float* alpha = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
-    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
-    {
-        alpha[i] = b[i] - delay[i];
-    }
-    return alpha;
-}
-
-float* calcbeta(float* alpha)
-{
-    float* beta = (float*)malloc(NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float));
-    for (int i = 0; i < NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS; ++i)
-    {
-        beta[i] = 1 - alpha[i];
-    }
-    return beta;
-}*/
