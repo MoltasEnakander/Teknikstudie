@@ -684,18 +684,17 @@ void listen_live()
         fprintf(signal, "set xrange [ -0.5 : %f ] \n", NUM_VIEWS-0.5);
         fprintf(signal, "set yrange [ -0.5 : %f ] \n", NUM_VIEWS-0.5);
         fprintf(signal, "plot '-' matrix with image\n");
-        int c = 0;
-        for(int i = 0; i < NUM_VIEWS * NUM_VIEWS; i += NUM_FILTERS) // plot map for the lowest frequency band    
+        
+        for(int i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i)    
         {
             fprintf(signal, "%f ", data->beams[i]);
-            c++;
-            if (c % NUM_VIEWS == 0)
-                fprintf(signal, "\n");            
+            if ((i+1) % NUM_VIEWS == 0)
+                fprintf(signal, "\n");
         }
         
         fprintf(signal, "e\n");
         fprintf(signal, "e\n");
-        fflush(signal);
+        //fflush(signal);    
 
         // Display the buffered changes to stdout in the terminal
         //fflush(stdout);
