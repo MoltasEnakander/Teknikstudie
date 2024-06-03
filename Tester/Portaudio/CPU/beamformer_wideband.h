@@ -48,7 +48,7 @@ namespace plt = matplotlibcpp;
 #define FFT_OUTPUT_SIZE (BLOCK_LEN)
 #define OLA_FFT_OUTPUT_SIZE (PADDED_OLA_LENGTH)
 
-#define DECIMATED_STEP (int(SAMPLE_RATE / (2 * 2 * F_C)))
+#define DECIMATED_STEP (16) //(int(SAMPLE_RATE / (2 * 2 * F_C)))
 #define DECIMATED_LENGTH (int(PADDED_OLA_LENGTH / DECIMATED_STEP))
 
 #define C (340.0) // m/s
@@ -77,8 +77,14 @@ typedef struct {
     fftwf_plan OLA_forw[NUM_CHANNELS * NUM_FILTERS]; // plan for calculating the fft of the OLA_signal
     fftwf_plan OLA_back[NUM_CHANNELS * NUM_FILTERS]; // plan for calculating the inverse fft of the OLA_signal after it has been LP-filtered after the IQ-downconversion
     
-    int* sine_cosine_counter;       // stores counters used to sync the multiplication of the new OLA_block with the sine and cosine terms                
+    int* sine_cosine_counter;       // stores counters used to sync the multiplication of the new OLA_block with the sine and cosine terms
+    float* sines;
+    float* cosines; 
     fftwf_complex* OLA_fft;         // stores the fft of the OLA_signal
+
+    fftwf_complex* decimated_OLA_fft;
+    fftwf_complex* decimated_OLA;
+
     fftwf_complex* LP_filter;       // lowpass filter used after IQ-downconversion
     
     fftwf_complex* phase_shifts;    // contains the complex exponentials corresponding to phase shifts for each channel, filter and sample

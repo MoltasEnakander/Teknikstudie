@@ -13,8 +13,6 @@
 #include "AudioFile.h"
 #include <fftw3.h>
 
-#include <cufft.h>
-
 #include <include/pybind11/pybind11.h>
 #include <include/pybind11/embed.h>  // python interpreter
 #include <include/pybind11/stl.h>  // type conversion
@@ -42,16 +40,8 @@ namespace plt = matplotlibcpp;
 #define BANDWIDTH (2 * F_C * 2 / SAMPLE_RATE)
 #define BLOCK_LEN (2048)                                // how long a block will be to store zero padded signals
 #define FRAMES_PER_BUFFER (BLOCK_LEN - NUM_TAPS + 1)    // how many samples to save before callback function is called
-#define OLA_LENGTH (FRAMES_PER_BUFFER * (NUM_OLA_BLOCK - 1) + BLOCK_LEN)
-
-#define NUM_OLA_BLOCK (8) // how many blocks to store using overlap-add method before starting to apply FFT:s 
-#define PADDED_OLA_LENGTH (NUM_OLA_BLOCK * BLOCK_LEN)
 
 #define FFT_OUTPUT_SIZE (BLOCK_LEN)
-#define OLA_FFT_OUTPUT_SIZE (PADDED_OLA_LENGTH)
-
-#define DECIMATED_STEP (int(SAMPLE_RATE / (2 * 2 * F_C)))
-#define DECIMATED_LENGTH (int(PADDED_OLA_LENGTH / DECIMATED_STEP))
 
 #define C (340.0) // m/s
 #define ARRAY_DIST (0.042) // m
@@ -65,27 +55,23 @@ typedef struct {
     int thetaID[NUM_FILTERS];       // theta index of the strongest beam per frequency block
     int phiID[NUM_FILTERS];         // phi index of the strongest beam per frequency block
 
+    int* a;
+    int* b;
+    float* alpha;
+    float* beta;
+
     fftwf_complex* ordbuffer;       // ordered version of buffer, samples are sorted by channel first, sample id second
-    fftwf_complex* summedSignals;        // used to sum up the NUM_CHANNEL signals
+    fftwf_complex* block;
+    float* summedSignals;        // used to sum up the NUM_CHANNEL signals
     fftwf_plan forw_plans[NUM_CHANNELS]; // contains plans for calculating fft:s for the new incoming block  
     fftwf_plan back_plans[NUM_CHANNELS * NUM_FILTERS]; // contains plans for calculating inverse fft:s of the block after it has beem filtered
 
     fftwf_complex* fft_data;        // contains the fft-data for the new block [forw_plans(ordbuffer) = fft_data], ordered by channel
-    cufftComplex* d_fft_data;
-    fftwf_complex* firfiltersfft;   // fft of the filters
-    cufftComplex* d_firfiltersfft;   // fft of the filters on the gpu
-    cufftComplex* d_filtered_data;   // result of the pointwise multiplication
+    //fftwf_complex* firfiltersfft;   // fft of the filters
+    fftwf_complex* filtered_data;   // result of the pointwise multiplication
     fftwf_complex* filtered_data_temp;   // temporary container for the filtered data in the time domain [back_plans(filtered_data = filtered_data_temp)], results will be added to OLA_signal
-    fftwf_complex* OLA_signal;           // contains the combined signal for each channel and filter, after construction using overlap-add
     
-    fftwf_plan OLA_forw[NUM_CHANNELS * NUM_FILTERS]; // plan for calculating the fft of the OLA_signal
-    fftwf_plan OLA_back[NUM_CHANNELS * NUM_FILTERS]; // plan for calculating the inverse fft of the OLA_signal after it has been LP-filtered after the IQ-downconversion
-    
-    int* sine_cosine_counter;       // stores counters used to sync the multiplication of the new OLA_block with the sine and cosine terms                
-    fftwf_complex* OLA_fft;         // stores the fft of the OLA_signal
     fftwf_complex* LP_filter;       // lowpass filter used after IQ-downconversion
-    
-    fftwf_complex* phase_shifts;    // contains the complex exponentials corresponding to phase shifts for each channel, filter and sample
 } beamformingData;
 
 // positions in the microphone array
@@ -96,7 +82,13 @@ float* linspace(int a, int num);
 
 float* calcDelays(float* theta, float* phi);
 
-fftwf_complex* calcPhaseShifts(float* delay);
+int* calca(float* delay);
+
+int* calcb(int* a);
+
+float* calcalpha(float* delay, int* b);
+
+float* calcbeta(float* alpha);
 
 void listen_live();
 
