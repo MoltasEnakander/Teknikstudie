@@ -103,17 +103,23 @@ void bandpass_filtering(cufftComplex* summedSignals_fft_BP, cufftComplex* summed
     bandpass_filtering_calcs<<<(BLOCK_LEN+255)/256, 256>>>(i, summedSignals_fft_BP, summedSignals_fft, BP_filter);
     cudaDeviceSynchronize();
 
-    float beamstrength;
+    if (i == 0){
+        beams[0] = 4.0f;
+    }
+
+    /*float beamstrength;
+    int id;
     for (int j = 0; j < NUM_FILTERS; ++j)
     {
         beamstrength = 0.0f;
 
         for (int k = 0; k < BLOCK_LEN; ++k)
         {
-            beamstrength += sqrt(summedSignals_fft_BP[k].x * summedSignals_fft_BP[k].x + summedSignals_fft_BP[k].y * summedSignals_fft_BP[k].y);
+            id = k + j * NUM_FILTERS + i * NUM_FILTERS * BLOCK_LEN;
+            beamstrength += sqrt(summedSignals_fft_BP[id].x * summedSignals_fft_BP[id].x + summedSignals_fft_BP[id].y * summedSignals_fft_BP[id].y);
         }
-        beams[i + j * NUM_VIEWS * NUM_VIEWS] = 10 * log10(beamstrength);
-    }
+        beams[i + j * NUM_VIEWS * NUM_VIEWS] = beamstrength;//10 * log10(beamstrength);
+    }*/
 }
 
 
@@ -254,12 +260,16 @@ static void callBack(fftwf_complex* inputBuffer, beamformingData* data)
     cudaDeviceSynchronize();
 
     cufftExecC2C(data->planMany, data->summedSignals, data->summedSignals_fft, CUFFT_FORWARD);
+    cudaDeviceSynchronize();
+    
     
     bandpass_filtering<<<numBlocks, threadsPerBlock>>>(data->summedSignals_fft_BP, data->summedSignals_fft, data->BP_filter, data->gpu_beams);
-    cudaDeviceSynchronize();
+    cudaDeviceSynchronize();    
 
     // copy the intensity of the beams to the cpu
-    cudaMemcpy(data->beams, data->gpu_beams, NUM_VIEWS*NUM_VIEWS*NUM_FILTERS*sizeof(float), cudaMemcpyDeviceToHost);    
+    cudaMemcpy(data->beams, data->gpu_beams, NUM_VIEWS*NUM_VIEWS*NUM_FILTERS*sizeof(float), cudaMemcpyDeviceToHost);
+
+    printf("%f \n", data->beams[0]);    
 
     end = std::chrono::system_clock::now();
 
@@ -424,6 +434,7 @@ void listen_live()
     free(theta); free(phi); free(delay); free(a); free(b); free(alpha); free(beta); // free memory which does not have to be allocated anymore*/    
 
     data->beams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * NUM_FILTERS * sizeof(float));
+    std::memset(data->beams, 0.0f, NUM_VIEWS * NUM_VIEWS * NUM_FILTERS * sizeof(float));
     cudaMalloc(&(data->gpu_beams), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_FILTERS);
 
     cudaMalloc(&(data->gpu_block), sizeof(cufftComplex) * NUM_CHANNELS * BLOCK_LEN);
@@ -434,6 +445,8 @@ void listen_live()
     cudaMalloc(&(data->summedSignals), sizeof(cufftComplex) * NUM_VIEWS * NUM_VIEWS * BLOCK_LEN);
     cudaMalloc(&(data->summedSignals_fft), sizeof(cufftComplex) * NUM_VIEWS * NUM_VIEWS * BLOCK_LEN);
     cudaMalloc(&(data->summedSignals_fft_BP), sizeof(cufftComplex) * NUM_VIEWS * NUM_VIEWS * BLOCK_LEN * NUM_FILTERS);
+
+    cudaMemset(data->summedSignals_fft_BP, 1.0f, sizeof(cufftComplex) * NUM_VIEWS * NUM_VIEWS * BLOCK_LEN * NUM_FILTERS);
     cudaMalloc(&(data->BP_filter), sizeof(cufftComplex) * BLOCK_LEN * NUM_FILTERS);
 
     cudaMemset(data->summedSignals, 0, BLOCK_LEN * NUM_VIEWS * NUM_VIEWS * sizeof(cufftComplex));
