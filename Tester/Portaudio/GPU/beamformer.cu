@@ -1,10 +1,120 @@
-#include "beamformer2.h"
+#include "beamformer.h"
 
 #include <chrono>
 #include <ctime>
 #include <unistd.h>
 
 #include <thread>
+
+/*for (i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i) // loop beams
+{        
+    beamStrength = 0;
+    for (j = 0; j < NUM_CHANNELS; ++j) // loop channels
+    {
+        // interpolation of left sample
+        for (k = std::max(-data->a[i * NUM_CHANNELS + j], 0); k < std::min(BLOCK_LEN - data->a[i * NUM_CHANNELS + j], BLOCK_LEN); k++)
+        {
+            data->summedSignals[i * BLOCK_LEN + k] += data->alpha[i * NUM_CHANNELS + j] * data->filtered_data_temp[k + data->a[i * NUM_CHANNELS + j] + j * BLOCK_LEN][0];
+        }
+
+        // interpolation of right sample
+        for (k = std::max(-data->b[i * NUM_CHANNELS + j], 0); k < std::min(BLOCK_LEN - data->b[i * NUM_CHANNELS + j], BLOCK_LEN); k++)
+        {   
+            data->summedSignals[i * BLOCK_LEN + k] += data->beta[i * NUM_CHANNELS + j] * data->filtered_data_temp[k + data->b[i * NUM_CHANNELS + j] + j * BLOCK_LEN][0];
+        }
+    }
+    
+    // normalize and calculate "strength" of beam
+    for (k = 0; k < BLOCK_LEN; k++)
+    {
+        data->summedSignals[i * BLOCK_LEN + k] /= NUM_CHANNELS;
+        data->summedSignals[i * BLOCK_LEN + k] = data->summedSignals[i * BLOCK_LEN + k] * data->summedSignals[i * BLOCK_LEN + k] / BLOCK_LEN;
+        beamStrength += data->summedSignals[i * BLOCK_LEN + k]; 
+    }
+
+    data->beams[i] = 10 * std::log10(beamStrength);        
+}*/
+
+__global__
+void interpolateChannels(const cufftComplex* inputBuffer, cufftComplex* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta)
+{
+    int id;    
+    int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index of this thread
+    int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * BLOCK_LEN; // global index of this thread
+
+    // l1 -> 0 - 2047
+    // l2 -> 0 - 2047 + i * 2048, i -> 0 - 168
+
+    for (int k = 0; k < NUM_CHANNELS; ++k)
+    {
+        id = k + i * NUM_CHANNELS;        
+        if (max(0, -a[id]) == 0 && l1 < BLOCK_LEN - a[id]) // a >= 0            
+            summedSignals[l2].x += alpha[id] * inputBuffer[l1 + a[id] + k * BLOCK_LEN].x; // do not write to the a[id] end positions
+        else if (max(0, -a[id]) > 0 && l1 >= a[id]) 
+            summedSignals[l2].x += alpha[id] * inputBuffer[l1 + a[id] + k * BLOCK_LEN].x; // do not write to the first a[id]-1 positions
+
+        if (max(0, -b[id]) == 0 && l1 < BLOCK_LEN - b[id]) // b >= 0
+            summedSignals[l2].x += beta[id] * inputBuffer[l1 + b[id] + k * BLOCK_LEN].x; // do not write to the b[id] end positions
+        else if (max(0, -b[id]) > 0 && l1 >= b[id]) 
+            summedSignals[l2].x += beta[id] * inputBuffer[l1 + b[id] + k * BLOCK_LEN].x; // do not write to the first b[id]-1 positions*/
+    }    
+}
+
+__global__ 
+void beamforming(const cufftComplex* inputBuffer, const int* a, const int* b, float* alpha, const float* beta, cufftComplex* summedSignals)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i >= NUM_VIEWS * NUM_VIEWS){
+        return;
+    }
+
+    // interpolate channels    
+    interpolateChannels<<<(BLOCK_LEN+255)/256, 256>>>(inputBuffer, summedSignals, i, a, b, alpha, beta);
+    cudaDeviceSynchronize();    
+}
+
+__global__
+void bandpass_filtering_calcs(int i, cufftComplex* summedSignals_fft_BP, cufftComplex* summedSignals_fft, cufftComplex* BP_filter)
+{
+    int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index, from 0 to BLOCK_LEN - 1
+    int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * BLOCK_LEN; // internal index + compensation for which beam is being calced
+    int l3 = blockIdx.x * blockDim.x + threadIdx.x + i * NUM_FILTERS * BLOCK_LEN; // as l2, but compensates for beams being calced in different freq-bands
+    //       -           0 - 2047               -, + i *     6      *  2048   
+
+    for (int j = 0; j < NUM_FILTERS; ++j)
+    {        
+        summedSignals_fft_BP[l3 + j * BLOCK_LEN].x = summedSignals_fft[l2].x * BP_filter[l1 + j * BLOCK_LEN].x - summedSignals_fft[l2].y * BP_filter[l1 + j * BLOCK_LEN].y;
+        summedSignals_fft_BP[l3 + j * BLOCK_LEN].y = summedSignals_fft[l2].x * BP_filter[l1 + j * BLOCK_LEN].y + summedSignals_fft[l2].y * BP_filter[l1 + j * BLOCK_LEN].x;        
+    }
+    // after these calculations there should be NUM_FILTERS signals per view, and each signals is BLOCK_LEN samples long, the strength of the signals need to be calced
+}
+
+__global__
+void bandpass_filtering(cufftComplex* summedSignals_fft_BP, cufftComplex* summedSignals_fft, cufftComplex* BP_filter, float* beams)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;    
+
+    if (i >= NUM_VIEWS * NUM_VIEWS){
+        return;
+    }
+
+    // calculations
+    bandpass_filtering_calcs<<<(BLOCK_LEN+255)/256, 256>>>(i, summedSignals_fft_BP, summedSignals_fft, BP_filter);
+    cudaDeviceSynchronize();
+
+    float beamstrength;
+    for (int j = 0; j < NUM_FILTERS; ++j)
+    {
+        beamstrength = 0.0f;
+
+        for (int k = 0; k < BLOCK_LEN; ++k)
+        {
+            beamstrength += sqrt(summedSignals_fft_BP[k].x * summedSignals_fft_BP[k].x + summedSignals_fft_BP[k].y * summedSignals_fft_BP[k].y);
+        }
+        beams[i + j * NUM_VIEWS * NUM_VIEWS] = 10 * log10(beamstrength);
+    }
+}
 
 
 void free_resources(beamformingData* data)
@@ -13,11 +123,16 @@ void free_resources(beamformingData* data)
     free(data->beams);
     fftwf_free(data->ordbuffer);
     fftwf_free(data->block);
-    free(data->summedSignals);    
-    free(data->a);
-    free(data->alpha);
-    free(data->b);
-    free(data->beta);
+    cudaFree(data->summedSignals);   
+    cudaFree(data->summedSignals_fft);
+    cudaFree(data->summedSignals_fft_BP);
+    cudaFree(data->BP_filter);
+    cudaFree(data->a);
+    cudaFree(data->alpha);
+    cudaFree(data->b);
+    cudaFree(data->beta);
+    cudaFree(data->gpu_block);
+    cudaFree(data->gpu_beams);
     fftwf_free(data->fft_data);
     //fftwf_free(data->firfiltersfft);
     fftwf_free(data->filtered_data);
@@ -29,19 +144,21 @@ void free_resources(beamformingData* data)
         fftwf_destroy_plan(data->forw_plans[i]);
         fftwf_destroy_plan(data->back_plans[i]);                
     }
+
+    cufftDestroy(data->planMany);
     
     free(data);
 }
 
 // Checks the return value of a PortAudio function. Logs the message and exits
 // if there was an error
-static void checkErr(PaError err, beamformingData* data) {
+/*static void checkErr(PaError err, beamformingData* data) {
     if (err != paNoError) {
         printf("PortAudio error: %s\n", Pa_GetErrorText(err));
         free_resources(data);
         exit(EXIT_FAILURE);
     }
-}
+}*/
 
 // PortAudio stream callback function. Will be called after every
 // FRAMES_PER_BUFFER audio samples PortAudio captures. Used to process the
@@ -100,7 +217,7 @@ static void callBack(fftwf_complex* inputBuffer, beamformingData* data)
     }
 
     // perform lowpass filtering in freq domain
-    int resultID, filterID, dataID;
+    int resultID, dataID;
     for (int i = 0; i < NUM_CHANNELS; ++i) // for every channel
     {
         for (int j = 0; j < FFT_OUTPUT_SIZE; ++j) // for all samples
@@ -116,41 +233,33 @@ static void callBack(fftwf_complex* inputBuffer, beamformingData* data)
         fftwf_execute(data->back_plans[i]);    
     }
 
-    // create beams
-    int i, j, k;
-    double beamStrength;    
+    cudaMemcpy(data->gpu_block, data->filtered_data_temp, BLOCK_LEN*NUM_CHANNELS*sizeof(fftwf_complex), cudaMemcpyHostToDevice); // copy buffer to GPU memory
 
-    /*for (i = 0; i < NUM_VIEWS * NUM_VIEWS; ++i) // loop beams
-    {        
-        beamStrength = 0;
-        for (j = 0; j < NUM_CHANNELS; ++j) // loop channels
-        {
-            // interpolation of left sample
-            for (k = std::max(-data->a[i * NUM_CHANNELS + j], 0); k < std::min(BLOCK_LEN - data->a[i * NUM_CHANNELS + j], BLOCK_LEN); k++)
-            {
-                data->summedSignals[i * BLOCK_LEN + k] += data->alpha[i * NUM_CHANNELS + j] * data->filtered_data_temp[k + data->a[i * NUM_CHANNELS + j] + j * BLOCK_LEN][0];
-            }
+    // beamform
+    int numBlocks;
+    dim3 threadsPerBlock;
+    if (NUM_VIEWS * NUM_VIEWS > MAX_THREADS_PER_BLOCK){
+        numBlocks = (NUM_VIEWS * NUM_VIEWS) % MAX_THREADS_PER_BLOCK + 1;
+        threadsPerBlock = dim3(MAX_THREADS_PER_BLOCK);
+    }
+    else{
+        numBlocks = 1;
+        threadsPerBlock = dim3(NUM_VIEWS * NUM_VIEWS);
+    }
+    
+    cudaMemset(data->summedSignals, 0, BLOCK_LEN * NUM_VIEWS * NUM_VIEWS * sizeof(cufftComplex)); // reset signals    
 
-            // interpolation of right sample
-            for (k = std::max(-data->b[i * NUM_CHANNELS + j], 0); k < std::min(BLOCK_LEN - data->b[i * NUM_CHANNELS + j], BLOCK_LEN); k++)
-            {   
-                data->summedSignals[i * BLOCK_LEN + k] += data->beta[i * NUM_CHANNELS + j] * data->filtered_data_temp[k + data->b[i * NUM_CHANNELS + j] + j * BLOCK_LEN][0];
-            }
-        }
-        
-        // normalize and calculate "strength" of beam
-        for (k = 0; k < BLOCK_LEN; k++)
-        {
-            data->summedSignals[i * BLOCK_LEN + k] /= NUM_CHANNELS;
-            data->summedSignals[i * BLOCK_LEN + k] = data->summedSignals[i * BLOCK_LEN + k] * data->summedSignals[i * BLOCK_LEN + k] / BLOCK_LEN;
-            beamStrength += data->summedSignals[i * BLOCK_LEN + k]; 
-        }
+    // create beams    
+    beamforming<<<numBlocks, threadsPerBlock>>>(data->gpu_block, data->a, data->b, data->alpha, data->beta, data->summedSignals);
+    cudaDeviceSynchronize();
 
-        data->beams[i] = 10 * std::log10(beamStrength);     
-        
-    }*/
+    cufftExecC2C(data->planMany, data->summedSignals, data->summedSignals_fft, CUFFT_FORWARD);
+    
+    bandpass_filtering<<<numBlocks, threadsPerBlock>>>(data->summedSignals_fft_BP, data->summedSignals_fft, data->BP_filter, data->gpu_beams);
+    cudaDeviceSynchronize();
 
-    // recursive bandpass filters
+    // copy the intensity of the beams to the cpu
+    cudaMemcpy(data->beams, data->gpu_beams, NUM_VIEWS*NUM_VIEWS*NUM_FILTERS*sizeof(float), cudaMemcpyDeviceToHost);    
 
     end = std::chrono::system_clock::now();
 
@@ -277,7 +386,7 @@ void listen_live()
     {
         filter_plans[i] = fftwf_plan_dft_1d(BLOCK_LEN, &firfilters[i * BLOCK_LEN], &data->firfiltersfft[i * FFT_OUTPUT_SIZE], FFTW_FORWARD, FFTW_ESTIMATE);
     }*/
-    lp_filter_plan = fftwf_plan_dft_1d(FFTW_ESTIMATE, lpfilter, data->LP_filter, FFTW_FORWARD, FFTW_ESTIMATE);
+    lp_filter_plan = fftwf_plan_dft_1d(BLOCK_LEN, lpfilter, data->LP_filter, FFTW_FORWARD, FFTW_ESTIMATE);
 
     /*for (int i = 0; i < NUM_FILTERS; ++i)
     {
@@ -295,24 +404,40 @@ void listen_live()
     free(lpfilter);
     printf("FIR filters are created.\n");
 
-    printf("Setting up buffers.\n");
     float* theta = linspace(MIN_VIEW, NUM_VIEWS);
     float* phi = linspace(MIN_VIEW, NUM_VIEWS);
     float* delay = calcDelays(theta, phi);
 
-    data->a = calca(delay);
-    data->b = calcb(data->a);
-    data->alpha = calcalpha(delay, data->b);
-    data->beta = calcbeta(data->alpha);    
-    
-    free(theta); free(phi); free(delay); // free memory which does not have to be allocated anymore*/    
-    
+    int* a = calca(delay);
+    int* b = calcb(a);
+    float* alpha = calcalpha(delay, b);
+    float* beta = calcbeta(alpha);
+
+    cudaMalloc(&(data->a), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
+    cudaMalloc(&(data->b), sizeof(int) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
+    cudaMalloc(&(data->alpha), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
+    cudaMalloc(&(data->beta), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_CHANNELS);
+    cudaMemcpy(data->a, a, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->b, b, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->alpha, alpha, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->beta, beta, NUM_VIEWS*NUM_VIEWS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
+    free(theta); free(phi); free(delay); free(a); free(b); free(alpha); free(beta); // free memory which does not have to be allocated anymore*/    
+
     data->beams = (float*)malloc(NUM_VIEWS * NUM_VIEWS * NUM_FILTERS * sizeof(float));
+    cudaMalloc(&(data->gpu_beams), sizeof(float) * NUM_VIEWS * NUM_VIEWS * NUM_FILTERS);
+
+    cudaMalloc(&(data->gpu_block), sizeof(cufftComplex) * NUM_CHANNELS * BLOCK_LEN);
+
     data->ordbuffer = (fftwf_complex*)fftwf_malloc(FRAMES_PER_BUFFER * NUM_CHANNELS * sizeof(fftwf_complex));
     data->block = (fftwf_complex*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(fftwf_complex));
-    data->summedSignals = (float*)malloc(BLOCK_LEN * NUM_VIEWS * NUM_VIEWS * sizeof(float));
+    data->summedSignals2 = (fftwf_complex*)fftwf_malloc(NUM_VIEWS * NUM_VIEWS * BLOCK_LEN * sizeof(fftwf_complex));
+    cudaMalloc(&(data->summedSignals), sizeof(cufftComplex) * NUM_VIEWS * NUM_VIEWS * BLOCK_LEN);
+    cudaMalloc(&(data->summedSignals_fft), sizeof(cufftComplex) * NUM_VIEWS * NUM_VIEWS * BLOCK_LEN);
+    cudaMalloc(&(data->summedSignals_fft_BP), sizeof(cufftComplex) * NUM_VIEWS * NUM_VIEWS * BLOCK_LEN * NUM_FILTERS);
+    cudaMalloc(&(data->BP_filter), sizeof(cufftComplex) * BLOCK_LEN * NUM_FILTERS);
 
-    std::memset(data->summedSignals, 0, BLOCK_LEN * NUM_VIEWS * NUM_VIEWS * sizeof(float));
+    cudaMemset(data->summedSignals, 0, BLOCK_LEN * NUM_VIEWS * NUM_VIEWS * sizeof(cufftComplex));
+    cudaMemset(data->BP_filter, 0, BLOCK_LEN * NUM_FILTERS * sizeof(cufftComplex));
 
     data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
     data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
@@ -331,6 +456,12 @@ void listen_live()
     }
 
     printf("Creating fft plans.\n");
+    int n[1] = {BLOCK_LEN};
+    int inembed[] = {BLOCK_LEN};
+    int onembed[] = {BLOCK_LEN};
+    
+    cufftPlanMany(&(data->planMany), 1, n, inembed, 1, BLOCK_LEN, onembed, 1, BLOCK_LEN, CUFFT_C2C, NUM_VIEWS*NUM_VIEWS);
+
     for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block
     {
         data->forw_plans[i] = fftwf_plan_dft_1d(BLOCK_LEN, &data->block[i * BLOCK_LEN], &data->fft_data[i * FFT_OUTPUT_SIZE], FFTW_FORWARD, FFTW_ESTIMATE); // NUM_CHANNELS channels for each block which requires FFT_OUTPUT_SIZE spots to store the fft data
@@ -347,12 +478,42 @@ void listen_live()
     }    
 
     // run the callback function 8 times
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 36; ++i)
     {
-        callBack(&input[i * FRAMES_PER_BUFFER], data);
+        callBack(&input[0], data);
     }
 
     free(input);
+
+    std::vector<float> d(BLOCK_LEN), bins(BLOCK_LEN), in(BLOCK_LEN), LP(BLOCK_LEN), filt(BLOCK_LEN);
+
+    for (int i = 0; i < BLOCK_LEN; ++i)
+    {
+        bins.at(i) = i;
+        in.at(i) = sqrt(data->fft_data[i][0] * data->fft_data[i][0] + data->fft_data[i][1] * data->fft_data[i][1]);
+        LP.at(i) = sqrt(data->LP_filter[i][0] * data->LP_filter[i][0] + data->LP_filter[i][1] * data->LP_filter[i][1]);
+        filt.at(i) = sqrt(data->filtered_data[i][0] * data->filtered_data[i][0] + data->filtered_data[i][1] * data->filtered_data[i][1]);
+    }
+
+    /*plt::figure(10);
+    plt::title("Frequency contents, channel 1");
+    plt::clf();    
+    plt::plot(bins, in);
+    plt::xlabel("freq bin");
+
+    plt::figure(11);
+    plt::title("Frequency contents, channel 1");
+    plt::clf();    
+    plt::plot(bins, LP);
+    plt::xlabel("freq bin");
+
+    plt::figure(12);
+    plt::title("Frequency contents, channel 1");
+    plt::clf();    
+    plt::plot(bins, filt);
+    plt::xlabel("freq bin");
+
+    plt::show();*/
     
     /*printf("Defining stream parameters.\n");
     PaStreamParameters inputParameters;

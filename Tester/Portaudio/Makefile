@@ -1,4 +1,4 @@
-EXEC3 = beamformer
+#EXEC3 = beamformer
 
 EXEC4 = plot_signal
 
@@ -16,14 +16,14 @@ EXEC11 = pybind
 
 EXEC12 = wide_gpu
 
-EXEC13 = beamformer2
+EXEC13 = beamformer
 
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
 		-lrt -lasound -ljack -pthread -I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 #-I./lib/fftw-3.3.10/api -lfftw3 \
 		-lsfml-graphics -lsfml-window -lsfml-system	-I /usr/include/python3.8/ -lpython3.8
 
-$(EXEC3): CPU/beamformer.cpp
-	g++ -o build/$@ $^ $(CLIB)
+#$(EXEC3): CPU/beamformer.cpp
+	#g++ -o build/$@ $^ $(CLIB)
 
 $(EXEC4): plot_signal.cpp
 	g++ -o build/$@ $^ $(CLIB)
@@ -57,7 +57,7 @@ $(EXEC12): GPU/main.cpp GPU/gpu_beamformer_wideband.cu
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt -I./lib/AudioFile/include -I./lib/fftw-3.3.10/api -lfftw3f -lm \
 			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft -I./extern/pybind11
 
-$(EXEC13): main.cpp CPU/beamformer2.cpp
+$(EXEC13): main.cpp GPU/beamformer.cu
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt -I./lib/AudioFile/include -I./lib/fftw-3.3.10/api -lfftw3f -lm \
 			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft -I./extern/pybind11

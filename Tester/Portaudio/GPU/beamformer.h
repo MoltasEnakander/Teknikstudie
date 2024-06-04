@@ -12,6 +12,7 @@
 #include <portaudio.h> // PortAudio: Used for audio capture
 #include "AudioFile.h"
 #include <fftw3.h>
+#include <cufft.h>
 
 #include <include/pybind11/pybind11.h>
 #include <include/pybind11/embed.h>  // python interpreter
@@ -52,6 +53,7 @@ typedef struct {
     int frameIndex;                 // current number of frames that have been processed
 
     float* beams;                   // magnitude of the beams
+    float* gpu_beams;
     int thetaID[NUM_FILTERS];       // theta index of the strongest beam per frequency block
     int phiID[NUM_FILTERS];         // phi index of the strongest beam per frequency block
 
@@ -62,7 +64,9 @@ typedef struct {
 
     fftwf_complex* ordbuffer;       // ordered version of buffer, samples are sorted by channel first, sample id second
     fftwf_complex* block;
-    float* summedSignals;        // used to sum up the NUM_CHANNEL signals
+    cufftComplex* gpu_block;
+    cufftComplex* summedSignals;        // used to sum up the NUM_CHANNEL signals
+    fftwf_complex* summedSignals2;        // used to sum up the NUM_CHANNEL signals    
     fftwf_plan forw_plans[NUM_CHANNELS]; // contains plans for calculating fft:s for the new incoming block  
     fftwf_plan back_plans[NUM_CHANNELS * NUM_FILTERS]; // contains plans for calculating inverse fft:s of the block after it has beem filtered
 
@@ -72,6 +76,12 @@ typedef struct {
     fftwf_complex* filtered_data_temp;   // temporary container for the filtered data in the time domain [back_plans(filtered_data = filtered_data_temp)], results will be added to OLA_signal
     
     fftwf_complex* LP_filter;       // lowpass filter used after IQ-downconversion
+
+
+    cufftHandle planMany;
+    cufftComplex* summedSignals_fft;
+    cufftComplex* summedSignals_fft_BP;
+    cufftComplex* BP_filter;
 } beamformingData;
 
 // positions in the microphone array
