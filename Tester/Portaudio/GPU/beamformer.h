@@ -10,7 +10,6 @@
 #include <complex>
 
 #include <portaudio.h> // PortAudio: Used for audio capture
-#include "AudioFile.h"
 #include <fftw3.h>
 #include <cufft.h>
 
@@ -31,7 +30,7 @@ namespace plt = matplotlibcpp;
 #define MIN_VIEW (-60)
 #define MAX_VIEW (60)
 #define VIEW_INTERVAL (10)
-#define NUM_VIEWS ((MAX_VIEW - MIN_VIEW) / VIEW_INTERVAL + 1)
+#define NUM_BEAMS ((MAX_VIEW - MIN_VIEW) / VIEW_INTERVAL + 1)
 
 #define MAX_THREADS_PER_BLOCK (1024)
 
@@ -39,8 +38,8 @@ namespace plt = matplotlibcpp;
 #define NUM_FILTERS (6)
 #define F_C (500)
 #define BANDWIDTH (2 * F_C * 2 / SAMPLE_RATE)
-#define BLOCK_LEN (2048)                                // how long a block will be to store zero padded signals
-#define FRAMES_PER_BUFFER (BLOCK_LEN - NUM_TAPS + 1)    // how many samples to save before callback function is called
+#define BLOCK_LEN (2048)
+#define TEMP (128)
 
 #define FFT_OUTPUT_SIZE (BLOCK_LEN)
 
@@ -51,37 +50,38 @@ namespace plt = matplotlibcpp;
 typedef struct {
     int maxFrameIndex;              // how many frames that should be processed
     int frameIndex;                 // current number of frames that have been processed
+    int numBlocks;
+    dim3 threadsPerBlock;
 
     float* beams;                   // magnitude of the beams
     float* gpu_beams;
     int thetaID[NUM_FILTERS];       // theta index of the strongest beam per frequency block
     int phiID[NUM_FILTERS];         // phi index of the strongest beam per frequency block
 
-    int* a;
+    int* a;                         // interpolation data
     int* b;
     float* alpha;
     float* beta;
 
+    fftwf_complex* temp;            // temp storage for the part of the new input block which is to be saved for future use
     fftwf_complex* ordbuffer;       // ordered version of buffer, samples are sorted by channel first, sample id second
-    fftwf_complex* block;
-    cufftComplex* gpu_block;
-    cufftComplex* summedSignals;        // used to sum up the NUM_CHANNEL signals
-    fftwf_complex* summedSignals2;        // used to sum up the NUM_CHANNEL signals    
-    fftwf_plan forw_plans[NUM_CHANNELS]; // contains plans for calculating fft:s for the new incoming block  
-    fftwf_plan back_plans[NUM_CHANNELS * NUM_FILTERS]; // contains plans for calculating inverse fft:s of the block after it has beem filtered
-
-    fftwf_complex* fft_data;        // contains the fft-data for the new block [forw_plans(ordbuffer) = fft_data], ordered by channel
-    //fftwf_complex* firfiltersfft;   // fft of the filters
-    fftwf_complex* filtered_data;   // result of the pointwise multiplication
-    fftwf_complex* filtered_data_temp;   // temporary container for the filtered data in the time domain [back_plans(filtered_data = filtered_data_temp)], results will be added to OLA_signal
+    fftwf_complex* block;           // data block to be LP-filtered before beamforming
+    cufftComplex* gpu_block;        // block(s) of data passed to the gpu for beamforming
+    cufftComplex* summedSignals;    // used to sum up the NUM_CHANNEL signals
     
-    fftwf_complex* LP_filter;       // lowpass filter used after IQ-downconversion
+    fftwf_plan forw_plans[NUM_CHANNELS];                // contains plans for calculating fft:s of the data block(s)
+    fftwf_plan back_plans[NUM_CHANNELS * NUM_FILTERS];  // contains plans for calculating inverse fft:s of the block(s) after they have beem filtered
 
+    fftwf_complex* fft_data;            // contains the fft-data for the new block [forw_plans(ordbuffer) = fft_data], ordered by channel
+    fftwf_complex* filtered_data;       // result of the pointwise multiplication    
+    fftwf_complex* LP_filter;           // lowpass filter used before beamforming
 
     cufftHandle planMany;
     cufftComplex* summedSignals_fft;
-    cufftComplex* summedSignals_fft_BP;
-    cufftComplex* BP_filter;
+    cufftComplex* summedSignals_fft_BP;    
+    cufftComplex* BP_filter;            // fft:s of the bandpass filters
+
+    fftwf_complex* testsignal;
 } beamformingData;
 
 // positions in the microphone array
@@ -99,9 +99,5 @@ int* calcb(int* a);
 float* calcalpha(float* delay, int* b);
 
 float* calcbeta(float* alpha);
-
-void listen_live();
-
-void listen_prerecorded(std::vector<AudioFile<float>>& files);
 
 #endif
