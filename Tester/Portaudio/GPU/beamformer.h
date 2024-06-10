@@ -80,8 +80,6 @@ typedef struct {
     cufftComplex* summedSignals_fft;
     cufftComplex* summedSignals_fft_BP;    
     cufftComplex* BP_filter;            // fft:s of the bandpass filters
-
-    fftwf_complex* testsignal;
 } beamformingData;
 
 // positions in the microphone array

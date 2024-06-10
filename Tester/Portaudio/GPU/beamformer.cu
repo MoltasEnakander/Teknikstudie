@@ -6,6 +6,9 @@
 
 #include <thread>
 
+#include <iostream>
+#include <fstream>
+
 __global__
 void interpolateChannels(const cufftComplex* inputBuffer, cufftComplex* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta)
 {
@@ -57,7 +60,10 @@ void bandpass_filtering_calcs(int i, cufftComplex* summedSignals_fft_BP, cufftCo
     for (int j = 0; j < NUM_FILTERS; ++j)
     {        
         summedSignals_fft_BP[l3 + j * BLOCK_LEN].x = summedSignals_fft[l2].x * BP_filter[l1 + j * BLOCK_LEN].x - summedSignals_fft[l2].y * BP_filter[l1 + j * BLOCK_LEN].y;
-        summedSignals_fft_BP[l3 + j * BLOCK_LEN].y = summedSignals_fft[l2].x * BP_filter[l1 + j * BLOCK_LEN].y + summedSignals_fft[l2].y * BP_filter[l1 + j * BLOCK_LEN].x;        
+        summedSignals_fft_BP[l3 + j * BLOCK_LEN].y = summedSignals_fft[l2].x * BP_filter[l1 + j * BLOCK_LEN].y + summedSignals_fft[l2].y * BP_filter[l1 + j * BLOCK_LEN].x;
+        // 0     - 2047  : beam 1, filter 1
+        // 2048  - 4095  : beam 1, filter 2
+        // 12228 - 14335 : beam 2, filter 1 
     }
     // after these calculations there should be NUM_FILTERS signals per view, and each signals is BLOCK_LEN samples long, the strength of the signals need to be calced
 }
@@ -82,7 +88,8 @@ void bandpass_filtering(cufftComplex* summedSignals_fft_BP, cufftComplex* summed
         beamstrength = 0.0f;
         for (int k = 0; k < BLOCK_LEN; ++k)
         {
-            id = k + j * NUM_FILTERS + i * NUM_FILTERS * BLOCK_LEN;
+            id = k + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN;
+
             beamstrength += summedSignals_fft_BP[id].x * summedSignals_fft_BP[id].x + summedSignals_fft_BP[id].y * summedSignals_fft_BP[id].y;
         }
         beams[i + j * NUM_BEAMS * NUM_BEAMS] = 20 * log10(sqrtf(beamstrength) / ( (float)NUM_CHANNELS * (float)(BLOCK_LEN * BLOCK_LEN * sqrtf((float)BLOCK_LEN))));
@@ -117,31 +124,30 @@ void free_resources(beamformingData* data)
         fftwf_destroy_plan(data->back_plans[i]);                
     }
 
-    cufftDestroy(data->planMany);
+    cufftDestroy(data->planMany);    
     
-    free(data->testsignal);
     free(data);
 }
 
 // Checks the return value of a PortAudio function. Logs the message and exits
 // if there was an error
-/*static void checkErr(PaError err, beamformingData* data) {
+static void checkErr(PaError err, beamformingData* data) {
     if (err != paNoError) {
         printf("PortAudio error: %s\n", Pa_GetErrorText(err));
         free_resources(data);
         exit(EXIT_FAILURE);
     }
-}*/
+}
 
 // PortAudio stream callback function. Will be called after every
 // BLOCK_LEN audio samples PortAudio captures. Used to process the
 // resulting audio sample.
-/*static int streamCallback(
+static int streamCallback(
     const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer,
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
-)*/
-static void callBack(float* inputBuffer, beamformingData* data)
+)
+//static void callBack(float* inputBuffer, beamformingData* data, std::string filename, bool b=false)
 {
     // Cast our input buffer to a float pointer (since our sample format is `paFloat32`)
     float* in = (float*)inputBuffer;
@@ -149,10 +155,10 @@ static void callBack(float* inputBuffer, beamformingData* data)
     // We will not be modifying the output buffer. This line is a no-op.
     //(void)outputBuffer;
 
-    //beamformingData* data = (beamformingData*)userData;
+    beamformingData* data = (beamformingData*)userData;
     
     // keep track of when to stop listening
-    /*int finished;
+    int finished;
     unsigned long framesLeft = data->maxFrameIndex - data->frameIndex;
 
     if( framesLeft < framesPerBuffer )
@@ -164,7 +170,7 @@ static void callBack(float* inputBuffer, beamformingData* data)
     {
         data->frameIndex += framesPerBuffer;
         finished = paContinue;
-    }*/
+    }
 
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
@@ -173,8 +179,8 @@ static void callBack(float* inputBuffer, beamformingData* data)
     {       
         for (int j = 0; j < BLOCK_LEN; ++j)
         {            
-            //data->ordbuffer[i * BLOCK_LEN + j][0] = in[j * NUM_CHANNELS + i];
-            data->ordbuffer[i * BLOCK_LEN + j][0] = in[j];
+            data->ordbuffer[i * BLOCK_LEN + j][0] = in[j * NUM_CHANNELS + i];
+            //data->ordbuffer[i * BLOCK_LEN + j][0] = in[j];
             data->ordbuffer[i * BLOCK_LEN + j][1] = 0.0f;            
         }        
     }
@@ -211,27 +217,71 @@ static void callBack(float* inputBuffer, beamformingData* data)
         fftwf_execute(data->back_plans[i]); // amplitude gain BLOCK_LEN
     }
 
+    /*std::vector<float> bins(BLOCK_LEN), f1(BLOCK_LEN), f2(BLOCK_LEN), f3(BLOCK_LEN), f4(BLOCK_LEN), f5(BLOCK_LEN), f6(BLOCK_LEN);
+    
+    for (int i = 0; i < BLOCK_LEN; ++i)
+    {
+        bins.at(i) = i;        
+        f1.at(i) = sqrt(data->filtered_data[i][0] * data->filtered_data[i][0] + data->filtered_data[i][1] * data->filtered_data[i][1]);
+    }
+    if (b)
+    {
+        plt::figure(1000);
+        plt::clf();    
+        plt::plot(bins, f1);
+        plt::xlabel("freq bin");    
+
+        plt::show();    
+    }*/
+
     // copy data blocks to gpu
     cudaMemcpy(data->gpu_block, data->block, BLOCK_LEN*NUM_CHANNELS*sizeof(fftwf_complex), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
 
     // create beams    
     beamforming<<<data->numBlocks, data->threadsPerBlock>>>(data->gpu_block, data->a, data->b, data->alpha, data->beta, data->summedSignals);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(data->testsignal, data->summedSignals, NUM_BEAMS*NUM_BEAMS*BLOCK_LEN*sizeof(cufftComplex), cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();    
 
     cufftExecC2C(data->planMany, data->summedSignals, data->summedSignals_fft, CUFFT_FORWARD);
-    cudaDeviceSynchronize();    
+    cudaDeviceSynchronize();
+
+    /*if (b)
+    {
+        fftwf_complex *temp_fft = (fftwf_complex*)fftwf_malloc(BLOCK_LEN * NUM_BEAMS * NUM_BEAMS * sizeof(fftwf_complex));
+        cudaMemcpy(temp_fft, data->summedSignals_fft, BLOCK_LEN*NUM_BEAMS*NUM_BEAMS*sizeof(fftwf_complex), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < BLOCK_LEN; ++i)
+        {
+            f2.at(i) = sqrt(temp_fft[i + 84*BLOCK_LEN][0] * temp_fft[i + 84*BLOCK_LEN][0] + temp_fft[i + 84*BLOCK_LEN][1] * temp_fft[i + 84*BLOCK_LEN][1]);            
+        }
+
+        plt::figure(1001);
+        plt::clf();    
+        plt::plot(bins, f2);
+        plt::xlabel("freq bin");    
+
+        plt::show();
+
+        fftwf_free(temp_fft);
+    }*/
     
     bandpass_filtering<<<data->numBlocks, data->threadsPerBlock>>>(data->summedSignals_fft_BP, data->summedSignals_fft, data->BP_filter, data->gpu_beams);
     cudaDeviceSynchronize();    
 
     // copy the intensity of the beams to the cpu
     cudaMemcpy(data->beams, data->gpu_beams, NUM_BEAMS*NUM_BEAMS*NUM_FILTERS*sizeof(float), cudaMemcpyDeviceToHost);
+    
+    /*std::ofstream file;
+    file.open(filename);
+    for (int i = 0; i < NUM_BEAMS * NUM_BEAMS * NUM_FILTERS; ++i)
+    {
+        file << data->beams[i];
+        file << "\n";
+    }
+    file.close();    
 
-    /*float max;
+    float max;
     int maxid = 0;
-    for (int f = 0; f < 1; ++f)
+    for (int f = 1; f < 2; ++f)
     {    
         printf("filter %d --------------------\n", f+1);
         for (int i = 0; i < NUM_BEAMS * NUM_BEAMS; ++i)
@@ -255,13 +305,13 @@ static void callBack(float* inputBuffer, beamformingData* data)
 
     std::cout << "elapsed: " << elapsed.count() << "s\n";
 
-    //return finished;
+    return finished;
 }
 
 int main() 
 {
     // Initialize PortAudio
-    /*PaError err;
+    PaError err;
     err = Pa_Initialize();
     checkErr(err, nullptr);
 
@@ -305,7 +355,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    printf("Device = %d\n", device);*/
+    printf("Device = %d\n", device);
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------
     // --------------------------------------------------------------------------------------------------------------    
@@ -367,12 +417,12 @@ int main()
     for (int i = 0; i < BLOCK_LEN; ++i)
     {
         if (i < NUM_TAPS)
-            lpfilter[i][0] = taps2[i];            
+            lpfilter[i][0] = taps2[i];
         else
-            lpfilter[i][0] = 0.0f; // zero pad filters            
+            lpfilter[i][0] = 0.0f; // zero pad filters
         lpfilter[i][1] = 0.0f;
     }
-    taps2.clear();    
+    taps2.clear();
 
     // apply fft to filters
     fftwf_complex* firfiltersfft = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_FILTERS * sizeof(fftwf_complex));
@@ -401,7 +451,7 @@ int main()
     cudaMemcpy(data->BP_filter, firfiltersfft, sizeof(cufftComplex) * BLOCK_LEN * NUM_FILTERS, cudaMemcpyHostToDevice);
     //cudaMemcpy(firfiltersfft, data->BP_filter, sizeof(cufftComplex) * BLOCK_LEN * NUM_FILTERS, cudaMemcpyDeviceToHost);
 
-    std::vector<float> bins(BLOCK_LEN), f1(BLOCK_LEN), f2(BLOCK_LEN), f3(BLOCK_LEN), f4(BLOCK_LEN), f5(BLOCK_LEN), f6(BLOCK_LEN);
+    /*std::vector<float> bins(BLOCK_LEN), f1(BLOCK_LEN), f2(BLOCK_LEN), f3(BLOCK_LEN), f4(BLOCK_LEN), f5(BLOCK_LEN), f6(BLOCK_LEN);
     
     for (int i = 0; i < BLOCK_LEN; ++i)
     {
@@ -415,11 +465,10 @@ int main()
         f6.at(i) = sqrt(firfiltersfft[i + 5 * BLOCK_LEN][0] * firfiltersfft[i + 5 * BLOCK_LEN][0] + firfiltersfft[i + 5 * BLOCK_LEN][1] * firfiltersfft[i + 5 * BLOCK_LEN][1]);
     }
 
-    /*plt::figure(1);
+    plt::figure(1);
     plt::clf();    
     plt::plot(bins, f1);
-    plt::xlabel("freq bin");
-    plt::pause(0.25);
+    plt::xlabel("freq bin");    
 
     plt::figure(2);
     plt::clf();    
@@ -434,8 +483,7 @@ int main()
     plt::figure(4);
     plt::clf();    
     plt::plot(bins, f4);
-    plt::xlabel("freq bin");
-    plt::pause(0.25);
+    plt::xlabel("freq bin");    
 
     plt::figure(5);
     plt::clf();    
@@ -445,7 +493,9 @@ int main()
     plt::figure(6);
     plt::clf();    
     plt::plot(bins, f6);
-    plt::xlabel("freq bin");*/
+    plt::xlabel("freq bin");
+
+    plt::show();*/
 
     free(firfilters);
     free(firfiltersfft);
@@ -495,14 +545,6 @@ int main()
     data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
     data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));    
 
-    data->testsignal = (fftwf_complex*)fftwf_malloc(NUM_BEAMS * NUM_BEAMS * BLOCK_LEN * sizeof(fftwf_complex));    
-
-    for (int i = 0; i < NUM_BEAMS * NUM_BEAMS * BLOCK_LEN; ++i)
-    {
-        data->testsignal[i][0] = 2.0f;
-        data->testsignal[i][1] = 1.0f;
-    }
-
     for (int i = 0; i < BLOCK_LEN * NUM_CHANNELS; ++i)
     {
         data->ordbuffer[i][0] = 0.0f;
@@ -528,20 +570,82 @@ int main()
         data->back_plans[i] = fftwf_plan_dft_1d(BLOCK_LEN, &data->filtered_data[i * FFT_OUTPUT_SIZE], &data->block[i * BLOCK_LEN], FFTW_BACKWARD, FFTW_ESTIMATE);
     }
 
-    float* input = (float*)malloc(BLOCK_LEN * 2 * sizeof(float));
-    for (int i = 0; i < BLOCK_LEN * 2; ++i)
+    /*float* input = (float*)malloc(BLOCK_LEN * 3 * sizeof(float));
+    for (int i = 0; i < BLOCK_LEN * 3; ++i)
     {
-        input[i] = cosf(2 * M_PI * 520.0f * (1.0f / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
+        input[i] = cosf(2 * M_PI * 500.0f * (1.0f / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1500.0f * (1.0f / SAMPLE_RATE) * i) + \
+                    cosf(2 * M_PI * 2500.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 3500.0f * (1.0f / SAMPLE_RATE) * i) + \
+                    cosf(2 * M_PI * 4500.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 5500.0f * (1.0f / SAMPLE_RATE) * i);
+    }    
+
+    // run the callback function 8 times    
+    callBack(input, data, "beams500.txt");
+    callBack(&(input[BLOCK_LEN]), data, "beams500.txt");
+    callBack(&(input[2*BLOCK_LEN]), data, "beams500.txt");
+
+
+    for (int i = 0; i < BLOCK_LEN * 3; ++i)
+    {
+        input[i] = cosf(2 * M_PI * 1500.0f * (1.0f / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
                     cosf(2 * M_PI * 2750.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 3400.0f * (1.0f / SAMPLE_RATE) * i);        
     }    
 
     // run the callback function 8 times    
-    callBack(input, data);
-    callBack(&(input[BLOCK_LEN]), data);
+    callBack(input, data, "beams1500.txt");
+    callBack(&(input[BLOCK_LEN]), data, "beams1500.txt");
+    callBack(&(input[2*BLOCK_LEN]), data, "beams1500.txt");
+
+
+    for (int i = 0; i < BLOCK_LEN * 3; ++i)
+    {
+        input[i] = cosf(2 * M_PI * 2500.0f * (1.0f / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
+                    cosf(2 * M_PI * 2750.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 3400.0f * (1.0f / SAMPLE_RATE) * i);        
+    }    
+
+    // run the callback function 8 times    
+    callBack(input, data, "beams2500.txt");
+    callBack(&(input[BLOCK_LEN]), data, "beams2500.txt");
+    callBack(&(input[2*BLOCK_LEN]), data, "beams2500.txt");
+
+
+    for (int i = 0; i < BLOCK_LEN * 3; ++i)
+    {
+        input[i] = cosf(2 * M_PI * 3500.0f * (1.0f / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
+                    cosf(2 * M_PI * 2750.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 3400.0f * (1.0f / SAMPLE_RATE) * i);        
+    }    
+
+    // run the callback function 8 times    
+    callBack(input, data, "beams3500.txt");
+    callBack(&(input[BLOCK_LEN]), data, "beams3500.txt");
+    callBack(&(input[2*BLOCK_LEN]), data, "beams3500.txt");
+
+
+    for (int i = 0; i < BLOCK_LEN * 3; ++i)
+    {
+        input[i] = cosf(2 * M_PI * 4500.0f * (1.0f / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
+                    cosf(2 * M_PI * 2750.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 3400.0f * (1.0f / SAMPLE_RATE) * i);        
+    }    
+
+    // run the callback function 8 times    
+    callBack(input, data, "beams4500.txt");
+    callBack(&(input[BLOCK_LEN]), data, "beams4500.txt");
+    callBack(&(input[2*BLOCK_LEN]), data, "beams4500.txt");
+
+
+    for (int i = 0; i < BLOCK_LEN * 3; ++i)
+    {
+        input[i] = cosf(2 * M_PI * 5500.0f * (1.0f / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1700.0f * (1.0f / SAMPLE_RATE) * i) + \
+                    cosf(2 * M_PI * 2750.0f * (1.0f / SAMPLE_RATE) * i) + cosf(2 * M_PI * 3400.0f * (1.0f / SAMPLE_RATE) * i);        
+    }    
+
+    // run the callback function 8 times    
+    callBack(input, data, "beams5500.txt");
+    callBack(&(input[BLOCK_LEN]), data, "beams5500.txt");
+    callBack(&(input[2*BLOCK_LEN]), data, "beams5500.txt");
     
     printf("Done with callback.\n");
 
-    free(input);
+    free(input);*/
 
     /*std::vector<float> d(BLOCK_LEN), in(BLOCK_LEN), LP(BLOCK_LEN), filt(BLOCK_LEN);
 
@@ -568,11 +672,11 @@ int main()
     plt::title("Frequency contents, channel 1");
     plt::clf();    
     plt::plot(bins, filt);
-    plt::xlabel("freq bin");
+    plt::xlabel("freq bin");*/
 
-    plt::show();*/
+    //plt::show();
     
-    /*printf("Defining stream parameters.\n");
+    printf("Defining stream parameters.\n");
     PaStreamParameters inputParameters;
     memset(&inputParameters, 0, sizeof(inputParameters));
     inputParameters.channelCount = NUM_CHANNELS;
@@ -598,23 +702,24 @@ int main()
 
     // Begin capturing audio
     err = Pa_StartStream(stream);
-    checkErr(err, data);*/
+    checkErr(err, data);
 
-    //FILE* signal = popen("gnuplot", "w");
+    FILE* signal = popen("gnuplot", "w");
     //FILE* signal2 = popen("gnuplot", "w");
     //FILE* signal3 = popen("gnuplot", "w");
-    
-    std::vector<float> d(BLOCK_LEN), fft_data(BLOCK_LEN), LP(BLOCK_LEN), block(BLOCK_LEN), summedsignal(BLOCK_LEN);
-    //while( ( err = Pa_IsStreamActive( stream ) ) == 1 )    
-    //{
-        int beam = 84;
+
+    //PyObject *mat1, *mat2, *mat3, *mat4, *mat5, *mat6;
+
+    //std::vector<float> d(BLOCK_LEN), fft_data(BLOCK_LEN), LP(BLOCK_LEN), block(BLOCK_LEN), summedsignal(BLOCK_LEN);
+    while( ( err = Pa_IsStreamActive( stream ) ) == 1 )    
+    {
+        /*int beam = 84;
         for (int i = 0; i < BLOCK_LEN; ++i)
         {            
             fft_data.at(i) = sqrt(data->fft_data[i][0] * data->fft_data[i][0] + data->fft_data[i][1] * data->fft_data[i][1]);
             LP.at(i) = sqrt(data->LP_filter[i][0] * data->LP_filter[i][0] + data->LP_filter[i][1] * data->LP_filter[i][1]);
-            block.at(i) = data->block[i][0];
-            summedsignal.at(i) = data->testsignal[i + beam * BLOCK_LEN][0];
-        }
+            block.at(i) = data->block[i][0];            
+        }*/
 
         /*plt::figure(10);
         plt::clf();
@@ -627,7 +732,7 @@ int main()
         plt::plot(bins, LP);
         plt::xlabel("freq bin");*/
 
-        plt::figure(12);
+        /*plt::figure(12);
         plt::clf();
         plt::plot(bins, block);
         plt::xlabel("time bin");
@@ -635,9 +740,39 @@ int main()
         plt::figure(13);
         plt::clf();
         plt::plot(bins, summedsignal);
-        plt::xlabel("time bin");
+        plt::xlabel("time bin");*/
 
-        plt::show();
+        /*plt::figure(100);
+        plt::clf();
+        plt::imshow(data->beams, NUM_BEAMS, NUM_BEAMS, 1, {}, &mat1);
+        plt::colorbar(mat1);
+
+        plt::figure(101);
+        plt::clf();
+        plt::imshow(&(data->beams[NUM_BEAMS * NUM_BEAMS]), NUM_BEAMS, NUM_BEAMS, 1, {}, &mat2);
+        plt::colorbar(mat2);
+
+        plt::figure(102);
+        plt::clf();
+        plt::imshow(&(data->beams[2 * NUM_BEAMS * NUM_BEAMS]), NUM_BEAMS, NUM_BEAMS, 1, {}, &mat3);
+        plt::colorbar(mat3);
+
+        plt::figure(103);
+        plt::clf();
+        plt::imshow(&(data->beams[3 * NUM_BEAMS * NUM_BEAMS]), NUM_BEAMS, NUM_BEAMS, 1, {}, &mat4);
+        plt::colorbar(mat4);
+
+        plt::figure(104);
+        plt::clf();
+        plt::imshow(&(data->beams[4 * NUM_BEAMS * NUM_BEAMS]), NUM_BEAMS, NUM_BEAMS, 1, {}, &mat5);
+        plt::colorbar(mat5);
+
+        plt::figure(105);
+        plt::clf();
+        plt::imshow(&(data->beams[5 * NUM_BEAMS * NUM_BEAMS]), NUM_BEAMS, NUM_BEAMS, 1, {}, &mat6);
+        plt::colorbar(mat6);*/
+
+        //plt::pause(0.25);
 
         //Pa_Sleep(250);
         // plot maximum direction
@@ -672,33 +807,35 @@ int main()
         plt::pause(0.02);*/
 
         // plot beamforming results in color map
-        /*fprintf(signal, "unset key\n");
+        fprintf(signal, "unset key\n");
         fprintf(signal, "set pm3d\n");
         fprintf(signal, "set view map\n");
         fprintf(signal, "set xrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal, "set yrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal, "plot '-' matrix with image\n");
         
-        for(int i = 0; i < NUM_BEAMS * NUM_BEAMS; i++) // plot map for the lowest frequency band    
+        for(int i = 0 * NUM_BEAMS * NUM_BEAMS; i < 1 * NUM_BEAMS * NUM_BEAMS; i++) // plot map for the lowest frequency band    
         {
             fprintf(signal, "%f ", data->beams[i]);            
             if ((i+1) % NUM_BEAMS == 0)
                 fprintf(signal, "\n");            
         }
         
-        fprintf(signal, "\ne\n");        
-        fflush(signal);
+        fprintf(signal, "\ne\n");
 
-        fprintf(signal2, "unset key\n");
+        //sleep(0.25);
+        //fflush(signal);
+
+        /*fprintf(signal2, "unset key\n");
         fprintf(signal2, "set pm3d\n");
         fprintf(signal2, "set view map\n");
         fprintf(signal2, "set xrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal2, "set yrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal2, "plot '-' matrix with image\n");
         
-        for(int i = NUM_BEAMS * NUM_BEAMS; i < 2 * NUM_BEAMS * NUM_BEAMS; i++)
+        for(int i = 4 * NUM_BEAMS * NUM_BEAMS; i < 5 * NUM_BEAMS * NUM_BEAMS; i++)
         {
-            fprintf(signal2, "%f ", data->beams[i]);            
+            fprintf(signal2, "%f ", data->beams[i]);
             if ((i+1) % NUM_BEAMS == 0)
                 fprintf(signal2, "\n");            
         }
@@ -721,16 +858,16 @@ int main()
         }
         
         fprintf(signal3, "\ne\n");        
-        fflush(signal3);
+        fflush(signal3);*/
 
         // Display the buffered changes to stdout in the terminal
-        fflush(stdout);
+        //fflush(stdout);
 
-        //plt::show();*/
-    //}    
+        //plt::show();
+    }    
 
     // Stop capturing audio
-    /*err = Pa_StopStream(stream);
+    err = Pa_StopStream(stream);
     checkErr(err, data);
 
     // Close the PortAudio stream
@@ -739,7 +876,7 @@ int main()
 
     // Terminate PortAudio
     err = Pa_Terminate();
-    checkErr(err, data);*/
+    checkErr(err, data);
 
     free_resources(data);
     return 0;
