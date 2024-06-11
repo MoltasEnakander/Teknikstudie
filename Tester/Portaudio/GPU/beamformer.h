@@ -24,7 +24,7 @@ namespace plt = matplotlibcpp;
 
 #define SAMPLE_RATE (44100.0)       // How many audio samples to capture every second (44100 Hz is standard)
 #define NUM_CHANNELS (16)           // Number of audio channels to capture
-#define NUM_SECONDS (10)
+#define NUM_SECONDS (15)
 #define DEVICE_NAME "UMA16v2: USB Audio (hw:2,0)"
 
 #define MIN_VIEW (-60)
@@ -83,8 +83,8 @@ typedef struct {
 } beamformingData;
 
 // positions in the microphone array
-static float ya[16] = {-0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f};
-static float za[16] = {-1.5f, -1.5f, -0.5f, -0.5f, 0.5f, 0.5f, 1.5f, 1.5f, 1.5f, 1.5f, 0.5f, 0.5f, -0.5f, -0.5f, -1.5f, -1.5f};
+static float xa[16] = {-0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f};
+static float ya[16] = {-1.5f, -1.5f, -0.5f, -0.5f, 0.5f, 0.5f, 1.5f, 1.5f, 1.5f, 1.5f, 0.5f, 0.5f, -0.5f, -0.5f, -1.5f, -1.5f};
 
 float* linspace(int a, int num);
 

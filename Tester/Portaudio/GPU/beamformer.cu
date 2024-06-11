@@ -389,7 +389,7 @@ int main()
         taps.push_back(obj.attr("__float__")().cast<float>());
     }
 
-    py::list res2 = my_func(1, NUM_TAPS, 15000.0f / 22050.0f);
+    py::list res2 = my_func(1, NUM_TAPS, 10000.0f / 22050.0f);
     // temporary save state of data
     std::vector<float> taps2;
     for (py::handle obj : res2) {  // iterators!
@@ -457,7 +457,7 @@ int main()
     {
         bins.at(i) = i;
         
-        f1.at(i) = sqrt(firfiltersfft[i][0] * firfiltersfft[i][0] + firfiltersfft[i][1] * firfiltersfft[i][1]);
+        f1.at(i) = sqrt(data->LP_filter[i][0] * data->LP_filter[i][0] + data->LP_filter[i][1] * data->LP_filter[i][1]);
         f2.at(i) = sqrt(firfiltersfft[i + BLOCK_LEN][0] * firfiltersfft[i + BLOCK_LEN][0] + firfiltersfft[i + BLOCK_LEN][1] * firfiltersfft[i + BLOCK_LEN][1]);
         f3.at(i) = sqrt(firfiltersfft[i + 2 * BLOCK_LEN][0] * firfiltersfft[i + 2 * BLOCK_LEN][0] + firfiltersfft[i + 2 * BLOCK_LEN][1] * firfiltersfft[i + 2 * BLOCK_LEN][1]);
         f4.at(i) = sqrt(firfiltersfft[i + 3 * BLOCK_LEN][0] * firfiltersfft[i + 3 * BLOCK_LEN][0] + firfiltersfft[i + 3 * BLOCK_LEN][1] * firfiltersfft[i + 3 * BLOCK_LEN][1]);
@@ -468,9 +468,9 @@ int main()
     plt::figure(1);
     plt::clf();    
     plt::plot(bins, f1);
-    plt::xlabel("freq bin");    
+    plt::xlabel("freq bin");*/
 
-    plt::figure(2);
+    /*plt::figure(2);
     plt::clf();    
     plt::plot(bins, f2);
     plt::xlabel("freq bin");
@@ -493,9 +493,9 @@ int main()
     plt::figure(6);
     plt::clf();    
     plt::plot(bins, f6);
-    plt::xlabel("freq bin");
+    plt::xlabel("freq bin");*/
 
-    plt::show();*/
+    //plt::show();
 
     free(firfilters);
     free(firfiltersfft);
@@ -814,7 +814,7 @@ int main()
         fprintf(signal, "set yrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal, "plot '-' matrix with image\n");
         
-        for(int i = 0 * NUM_BEAMS * NUM_BEAMS; i < 1 * NUM_BEAMS * NUM_BEAMS; i++) // plot map for the lowest frequency band    
+        for(int i = 1 * NUM_BEAMS * NUM_BEAMS; i < 2 * NUM_BEAMS * NUM_BEAMS; i++) // plot map for the lowest frequency band    
         {
             fprintf(signal, "%f ", data->beams[i]);            
             if ((i+1) % NUM_BEAMS == 0)
@@ -910,7 +910,7 @@ float* calcDelays(float* theta, float* phi)
     int tid = 0; // theta index
     for (int i = 0; i < NUM_BEAMS * NUM_BEAMS; ++i){        
         for (int k = 0; k < NUM_CHANNELS; ++k){
-            d[k + i * NUM_CHANNELS] = -(ya[k] * sinf(theta[tid]) * cosf(phi[pid]) + za[k] * sinf(phi[pid])) * ARRAY_DIST / C * SAMPLE_RATE;
+            d[k + i * NUM_CHANNELS] = -(xa[k] * sinf(theta[tid]) * cosf(phi[pid]) + ya[k] * sinf(phi[pid])) * ARRAY_DIST / C * SAMPLE_RATE;
         }
         tid++;
         if (tid >= NUM_BEAMS){
@@ -927,6 +927,7 @@ int* calca(float* delay)
     for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
     {
         a[i] = floor(delay[i]);
+        //printf("Beam %d, channel %d, a: %d \n", (i+NUM_CHANNELS) / NUM_CHANNELS , i % NUM_CHANNELS + 1, a[i]);
     }
     return a;
 }

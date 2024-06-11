@@ -3,4 +3,6 @@ Tester/Beampattern/build/
 Tester/Beampattern/data/
 Inspelningar/
 Tester/Portaudio/build/
-Tester/Portaudio/lib/
+Tester/Portaudio/lib
+Tester/Portaudio/*.txt
+
