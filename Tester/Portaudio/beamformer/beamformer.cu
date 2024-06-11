@@ -9,94 +9,6 @@
 #include <iostream>
 #include <fstream>
 
-__global__
-void interpolateChannels(const cufftComplex* inputBuffer, cufftComplex* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta)
-{
-    int id;    
-    int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index of this thread
-    int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * BLOCK_LEN; // global index of this thread
-
-    // l1 -> 0 - 2047
-    // l2 -> 0 - 2047 + i * 2048, i -> 0 - 168
-
-    summedSignals[l2].x = 0.0f;
-    for (int k = 0; k < NUM_CHANNELS; ++k)
-    {
-        id = k + i * NUM_CHANNELS;        
-        if (max(0, -a[id]) == 0 && l1 < BLOCK_LEN - a[id]) // a >= 0            
-            summedSignals[l2].x += alpha[id] * inputBuffer[l1 + a[id] + k * BLOCK_LEN].x; // do not write to the a[id] end positions
-        else if (max(0, -a[id]) > 0 && l1 >= a[id]) 
-            summedSignals[l2].x += alpha[id] * inputBuffer[l1 + a[id] + k * BLOCK_LEN].x; // do not write to the first a[id]-1 positions
-
-        if (max(0, -b[id]) == 0 && l1 < BLOCK_LEN - b[id]) // b >= 0
-            summedSignals[l2].x += beta[id] * inputBuffer[l1 + b[id] + k * BLOCK_LEN].x; // do not write to the b[id] end positions
-        else if (max(0, -b[id]) > 0 && l1 >= b[id]) 
-            summedSignals[l2].x += beta[id] * inputBuffer[l1 + b[id] + k * BLOCK_LEN].x; // do not write to the first b[id]-1 positions*/
-    }    
-}
-
-__global__ 
-void beamforming(const cufftComplex* inputBuffer, const int* a, const int* b, float* alpha, const float* beta, cufftComplex* summedSignals)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (i >= NUM_BEAMS * NUM_BEAMS){
-        return;
-    }
-
-    // interpolate channels    
-    interpolateChannels<<<(BLOCK_LEN+255)/256, 256>>>(inputBuffer, summedSignals, i, a, b, alpha, beta);
-    cudaDeviceSynchronize();    
-}
-
-__global__
-void bandpass_filtering_calcs(int i, cufftComplex* summedSignals_fft_BP, cufftComplex* summedSignals_fft, cufftComplex* BP_filter)
-{
-    int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index, from 0 to BLOCK_LEN - 1
-    int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * BLOCK_LEN; // internal index + compensation for which beam is being calced
-    int l3 = blockIdx.x * blockDim.x + threadIdx.x + i * BLOCK_LEN * NUM_FILTERS; // as l2, but compensates for beams being calced in different freq-bands
-    //       -           0 - 2047               -, + i *  2048     *     6
-
-    for (int j = 0; j < NUM_FILTERS; ++j)
-    {        
-        summedSignals_fft_BP[l3 + j * BLOCK_LEN].x = summedSignals_fft[l2].x * BP_filter[l1 + j * BLOCK_LEN].x - summedSignals_fft[l2].y * BP_filter[l1 + j * BLOCK_LEN].y;
-        summedSignals_fft_BP[l3 + j * BLOCK_LEN].y = summedSignals_fft[l2].x * BP_filter[l1 + j * BLOCK_LEN].y + summedSignals_fft[l2].y * BP_filter[l1 + j * BLOCK_LEN].x;
-        // 0     - 2047  : beam 1, filter 1
-        // 2048  - 4095  : beam 1, filter 2
-        // 12228 - 14335 : beam 2, filter 1 
-    }
-    // after these calculations there should be NUM_FILTERS signals per view, and each signals is BLOCK_LEN samples long, the strength of the signals need to be calced
-}
-
-__global__
-void bandpass_filtering(cufftComplex* summedSignals_fft_BP, cufftComplex* summedSignals_fft, cufftComplex* BP_filter, float* beams)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;    
-
-    if (i >= NUM_BEAMS * NUM_BEAMS){
-        return;
-    }
-
-    // calculations
-    bandpass_filtering_calcs<<<(BLOCK_LEN+255)/256, 256>>>(i, summedSignals_fft_BP, summedSignals_fft, BP_filter);
-    cudaDeviceSynchronize();
-
-    float beamstrength;
-    int id;
-    for (int j = 0; j < NUM_FILTERS; ++j)
-    {
-        beamstrength = 0.0f;
-        for (int k = 0; k < BLOCK_LEN; ++k)
-        {
-            id = k + j * BLOCK_LEN + i * NUM_FILTERS * BLOCK_LEN;
-
-            beamstrength += summedSignals_fft_BP[id].x * summedSignals_fft_BP[id].x + summedSignals_fft_BP[id].y * summedSignals_fft_BP[id].y;
-        }
-        beams[i + j * NUM_BEAMS * NUM_BEAMS] = 20 * log10(sqrtf(beamstrength) / ( (float)NUM_CHANNELS * (float)(BLOCK_LEN * BLOCK_LEN * sqrtf((float)BLOCK_LEN))));
-    }
-}
-
-
 void free_resources(beamformingData* data)
 {
     // free allocated memory
@@ -114,6 +26,10 @@ void free_resources(beamformingData* data)
     cudaFree(data->beta);
     cudaFree(data->gpu_block);
     cudaFree(data->gpu_beams);
+    cudaFree(data->coeff1);
+    cudaFree(data->coeff2);
+    cudaFree(data->coeff3);
+    cudaFree(data->coeff4);
     fftwf_free(data->fft_data);    
     fftwf_free(data->filtered_data);    
     fftwf_free(data->LP_filter);        
@@ -122,7 +38,7 @@ void free_resources(beamformingData* data)
     {
         fftwf_destroy_plan(data->forw_plans[i]);
         fftwf_destroy_plan(data->back_plans[i]);                
-    }
+    } 
 
     cufftDestroy(data->planMany);    
     
@@ -172,8 +88,8 @@ static int streamCallback(
         finished = paContinue;
     }
 
-    std::chrono::time_point<std::chrono::system_clock> start, end;
-    start = std::chrono::system_clock::now();
+    /*std::chrono::time_point<std::chrono::system_clock> start, end;
+    start = std::chrono::system_clock::now();*/
     
     for (int i = 0; i < NUM_CHANNELS; ++i) // sort the incoming buffer based on channel
     {       
@@ -216,6 +132,18 @@ static int streamCallback(
         // inverse fourier transform to get back signals in time domain.        
         fftwf_execute(data->back_plans[i]); // amplitude gain BLOCK_LEN
     }
+
+    /*std::chrono::time_point<std::chrono::system_clock> start, end;
+    start = std::chrono::system_clock::now();
+
+    // prepare cubic spline
+    spline_init(data->block, 1/SAMPLE_RATE, BLOCK_LEN, nullptr, nullptr, nullptr, nullptr);
+
+    end = std::chrono::system_clock::now();
+
+    std::chrono::duration<double> elapsed = end-start;
+
+    std::cout << "elapsed: " << elapsed.count() << "s\n";*/
 
     /*std::vector<float> bins(BLOCK_LEN), f1(BLOCK_LEN), f2(BLOCK_LEN), f3(BLOCK_LEN), f4(BLOCK_LEN), f5(BLOCK_LEN), f6(BLOCK_LEN);
     
@@ -299,11 +227,11 @@ static int streamCallback(
     printf("max id: %d\n", maxid);
     printf("max: %f\n", max);*/
 
-    end = std::chrono::system_clock::now();
+    /*end = std::chrono::system_clock::now();
 
     std::chrono::duration<double> elapsed = end-start;
 
-    std::cout << "elapsed: " << elapsed.count() << "s\n";
+    std::cout << "elapsed: " << elapsed.count() << "s\n";*/
 
     return finished;
 }
@@ -521,6 +449,11 @@ int main()
     cudaMemcpy(data->beta, beta, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
     free(theta); free(phi); free(delay); free(a); free(b); free(alpha); free(beta); // free memory which does not have to be allocated anymore*/    
 
+    cudaMalloc(&(data->coeff1), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->coeff2), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->coeff3), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->coeff4), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+
     printf("Create remaining buffers\n");
     data->beams = (float*)malloc(NUM_BEAMS * NUM_BEAMS * NUM_FILTERS * sizeof(float));
     std::memset(data->beams, 0.0f, NUM_BEAMS * NUM_BEAMS * NUM_FILTERS * sizeof(float));
@@ -705,8 +638,8 @@ int main()
     checkErr(err, data);
 
     FILE* signal = popen("gnuplot", "w");
-    //FILE* signal2 = popen("gnuplot", "w");
-    //FILE* signal3 = popen("gnuplot", "w");
+    FILE* signal2 = popen("gnuplot", "w");
+    FILE* signal3 = popen("gnuplot", "w");
 
     //PyObject *mat1, *mat2, *mat3, *mat4, *mat5, *mat6;
 
@@ -814,7 +747,7 @@ int main()
         fprintf(signal, "set yrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal, "plot '-' matrix with image\n");
         
-        for(int i = 1 * NUM_BEAMS * NUM_BEAMS; i < 2 * NUM_BEAMS * NUM_BEAMS; i++) // plot map for the lowest frequency band    
+        for(int i = 0 * NUM_BEAMS * NUM_BEAMS; i < 1 * NUM_BEAMS * NUM_BEAMS; i++) // plot map for the lowest frequency band    
         {
             fprintf(signal, "%f ", data->beams[i]);            
             if ((i+1) % NUM_BEAMS == 0)
@@ -824,16 +757,16 @@ int main()
         fprintf(signal, "\ne\n");
 
         //sleep(0.25);
-        //fflush(signal);
+        fflush(signal);
 
-        /*fprintf(signal2, "unset key\n");
+        fprintf(signal2, "unset key\n");
         fprintf(signal2, "set pm3d\n");
         fprintf(signal2, "set view map\n");
         fprintf(signal2, "set xrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal2, "set yrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal2, "plot '-' matrix with image\n");
         
-        for(int i = 4 * NUM_BEAMS * NUM_BEAMS; i < 5 * NUM_BEAMS * NUM_BEAMS; i++)
+        for(int i = 1 * NUM_BEAMS * NUM_BEAMS; i < 2 * NUM_BEAMS * NUM_BEAMS; i++)
         {
             fprintf(signal2, "%f ", data->beams[i]);
             if ((i+1) % NUM_BEAMS == 0)
@@ -841,16 +774,16 @@ int main()
         }
         
         fprintf(signal2, "\ne\n");        
-        fflush(signal2);*/
+        fflush(signal2);
 
-        /*fprintf(signal3, "unset key\n");
+        fprintf(signal3, "unset key\n");
         fprintf(signal3, "set pm3d\n");
         fprintf(signal3, "set view map\n");
         fprintf(signal3, "set xrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal3, "set yrange [ -0.5 : %f ] \n", NUM_BEAMS - 0.5f);
         fprintf(signal3, "plot '-' matrix with image\n");
         
-        for(int i = 0 * NUM_BEAMS * NUM_BEAMS; i < 1 * NUM_BEAMS * NUM_BEAMS; i++)
+        for(int i = 2 * NUM_BEAMS * NUM_BEAMS; i < 3 * NUM_BEAMS * NUM_BEAMS; i++)
         {
             fprintf(signal3, "%f ", data->beams[i]);            
             if ((i+1) % NUM_BEAMS == 0)
@@ -858,10 +791,10 @@ int main()
         }
         
         fprintf(signal3, "\ne\n");        
-        fflush(signal3);*/
+        fflush(signal3);
 
         // Display the buffered changes to stdout in the terminal
-        //fflush(stdout);
+        fflush(stdout);
 
         //plt::show();
     }    
@@ -880,84 +813,4 @@ int main()
 
     free_resources(data);
     return 0;
-}
-
-/////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////
-/////////////////// UTILITY FUNCTIONS ///////////////////////
-/////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////
-
-float* linspace(int a, int num)
-{
-    // create a vector of length num
-    //std::vector<double> v(NUM_BEAMS, 0);    
-    float* f = (float*)malloc(NUM_BEAMS*sizeof(float));    
-             
-    // now assign the values to the array
-    for (int i = 0; i < num; i++)
-    {
-        f[i] = (a + i * VIEW_INTERVAL) * M_PI / 180.0f;
-    }
-    return f;
-}
-
-float* calcDelays(float* theta, float* phi)
-{
-    float* d = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));    
-
-    int pid = 0; // phi index
-    int tid = 0; // theta index
-    for (int i = 0; i < NUM_BEAMS * NUM_BEAMS; ++i){        
-        for (int k = 0; k < NUM_CHANNELS; ++k){
-            d[k + i * NUM_CHANNELS] = -(xa[k] * sinf(theta[tid]) * cosf(phi[pid]) + ya[k] * sinf(phi[pid])) * ARRAY_DIST / C * SAMPLE_RATE;
-        }
-        tid++;
-        if (tid >= NUM_BEAMS){
-            tid = 0;
-            pid++;
-        }
-    }
-    return d;
-}
-
-int* calca(float* delay)
-{
-    int* a = (int*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(int));
-    for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
-    {
-        a[i] = floor(delay[i]);
-        //printf("Beam %d, channel %d, a: %d \n", (i+NUM_CHANNELS) / NUM_CHANNELS , i % NUM_CHANNELS + 1, a[i]);
-    }
-    return a;
-}
-
-int* calcb(int* a)
-{
-    int* b = (int*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(int));
-    for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
-    {
-        b[i] = a[i] + 1;
-    }
-    return b;
-}
-
-float* calcalpha(float* delay, int* b)
-{
-    float* alpha = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));
-    for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
-    {
-        alpha[i] = b[i] - delay[i];
-    }
-    return alpha;
-}
-
-float* calcbeta(float* alpha)
-{
-    float* beta = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));
-    for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
-    {
-        beta[i] = 1 - alpha[i];
-    }
-    return beta;
 }

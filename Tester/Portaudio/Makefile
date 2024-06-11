@@ -14,8 +14,6 @@ EXEC10 = fft-test
 
 EXEC11 = pybind
 
-EXEC12 = wide_gpu
-
 EXEC13 = beamformer
 
 CLIB = -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a \
@@ -52,12 +50,7 @@ $(EXEC10): fft-test.cpp
 $(EXEC11): pybind11test.cpp
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I /usr/include/python3.8/ -lpython3.8 -I./extern/pybind11
 
-$(EXEC12): GPU/main.cpp GPU/gpu_beamformer_wideband.cu
-	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
-			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt -I./lib/AudioFile/include -I./lib/fftw-3.3.10/api -lfftw3f -lm \
-			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft -I./extern/pybind11
-
-$(EXEC13): GPU/beamformer.cu
+$(EXEC13): beamformer/beamformer.cu beamformer/Coeff_Calc.cpp beamformer/beamforming.cu beamformer/bandpass_beams.cu beamformer/Interpolation_Preparation.cpp
 	nvcc -gencode arch=compute_62,code=sm_62 -rdc=true $^ -o build/$@ -I./lib/portaudio/include ./lib/portaudio/lib/.libs/libportaudio.a -lrt -lasound -ljack \
 			-I./lib/matplot/include -I /usr/include/python3.8/ -lpython3.8 -lcudadevrt -I./lib/fftw-3.3.10/api -lfftw3f -lm \
 			-I/usr/local/cuda/inc -L/usr/local/cuda/lib -lcufft -I./extern/pybind11
