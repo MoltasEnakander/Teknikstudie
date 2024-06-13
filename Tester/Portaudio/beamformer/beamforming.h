@@ -5,16 +5,16 @@
 #include <cufft.h>
 
 //__global__
-//void interpolateChannels(const cufftDoubleComplex* inputBuffer, cufftDoubleComplex* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta);
+//void interpolateChannels(const cufftComplex* inputBuffer, cufftComplex* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta);
 
 __global__
-void interpolateChannels(const double* time_stamps, double dt, cufftDoubleComplex* summedSignals, const int i,\
-						 const double* coeff1, const double* coeff2, const double* coeff3, const double* coeff4, double* mus, double* mus2, double* mus3);
+void interpolateChannels(const float* time_stamps, float dt, cufftComplex* summedSignals, const int i,\
+						 const float* coeff1, const float* coeff2, const float* coeff3, const float* coeff4, float* mus, float* mus2, float* mus3);
 
 //__global__ 
-//void beamforming(const cufftDoubleComplex* inputBuffer, const int* a, const int* b, float* alpha, const float* beta, cufftDoubleComplex* summedSignals);
+//void beamforming(const cufftComplex* inputBuffer, const int* a, const int* b, float* alpha, const float* beta, cufftComplex* summedSignals);
 
 __global__ 
-void beamforming(const double* delays, const double* coeff1, const double* coeff2, const double* coeff3, const double* coeff4, cufftDoubleComplex* summedSignals, double* mus, double* mus2, double* mus3);
+void beamforming(const float* delays, const float* coeff1, const float* coeff2, const float* coeff3, const float* coeff4, cufftComplex* summedSignals, float* mus, float* mus2, float* mus3);
 
 #endif

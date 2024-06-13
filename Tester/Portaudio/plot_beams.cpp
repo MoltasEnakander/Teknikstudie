@@ -11,7 +11,7 @@ int main()
 	const int NUM_FILTERS = 6;
 	float beams[NUM_BEAMS * NUM_BEAMS * NUM_FILTERS];
 	std::string line;
-	std::ifstream myfile ("txtfiles/beams3500.txt");
+	std::ifstream myfile ("txtfiles/beams500.txt");
 	if (myfile.is_open())
 	{
 		int i = 0;

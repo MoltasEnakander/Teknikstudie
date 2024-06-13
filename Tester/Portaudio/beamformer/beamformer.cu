@@ -13,9 +13,9 @@ void free_resources(beamformingData* data)
 {
     // free allocated memory
     free(data->beams);
-    fftw_free(data->ordbuffer);
-    fftw_free(data->temp);
-    fftw_free(data->block);
+    fftwf_free(data->ordbuffer);
+    fftwf_free(data->temp);
+    fftwf_free(data->block);
     cudaFree(data->summedSignals);   
     cudaFree(data->summedSignals_fft);
     cudaFree(data->summedSignals_fft_BP);
@@ -44,14 +44,14 @@ void free_resources(beamformingData* data)
     free(data->h_coeff2);
     free(data->h_coeff3);
     free(data->h_coeff4);
-    fftw_free(data->fft_data);    
-    fftw_free(data->filtered_data);    
-    fftw_free(data->LP_filter);        
+    fftwf_free(data->fft_data);    
+    fftwf_free(data->filtered_data);    
+    fftwf_free(data->LP_filter);        
     
     for (int i = 0; i < NUM_CHANNELS; ++i)
     {
-        fftw_destroy_plan(data->forw_plans[i]);
-        fftw_destroy_plan(data->back_plans[i]);                
+        fftwf_destroy_plan(data->forw_plans[i]);
+        fftwf_destroy_plan(data->back_plans[i]);                
     } 
 
     cufftDestroy(data->planMany);    
@@ -77,10 +77,10 @@ void free_resources(beamformingData* data)
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
 )*/
-static void callBack(double* inputBuffer, beamformingData* data, std::string filename, bool b=false)
+static void callBack(float* inputBuffer, beamformingData* data, std::string filename, bool b=false)
 {
-    // Cast our input buffer to a double pointer (since our sample format is `padouble32`)
-    double* in = (double*)inputBuffer;
+    // Cast our input buffer to a float pointer (since our sample format is `pafloat32`)
+    float* in = (float*)inputBuffer;
 
     // We will not be modifying the output buffer. This line is a no-op.
     //(void)outputBuffer;
@@ -111,7 +111,7 @@ static void callBack(double* inputBuffer, beamformingData* data, std::string fil
         {            
             //data->ordbuffer[i * BLOCK_LEN + j][0] = in[j * NUM_CHANNELS + i];
             data->ordbuffer[i * BLOCK_LEN + j][0] = in[j];
-            data->ordbuffer[i * BLOCK_LEN + j][1] = 0.0;            
+            data->ordbuffer[i * BLOCK_LEN + j][1] = 0.0f;            
         }        
     }
 
@@ -120,14 +120,14 @@ static void callBack(double* inputBuffer, beamformingData* data, std::string fil
         // 1. move the last part of the old input into the beginning of the block
         // 2. fill the rest of the block with BLOCK_LEN - TEMP values from the new input
         // 3. save the last TEMP values from the new input to the temp storage for use in next call
-        std::memcpy(&(data->block[i * BLOCK_LEN]), &(data->temp[i * TEMP]), TEMP * sizeof(fftw_complex)); 
-        std::memcpy(&(data->block[i * BLOCK_LEN + TEMP]), &(data->ordbuffer[i * BLOCK_LEN]), (BLOCK_LEN - TEMP) * sizeof(fftw_complex));
-        std::memcpy(&(data->temp[i * TEMP]), &(data->ordbuffer[i * BLOCK_LEN + (BLOCK_LEN - TEMP)]), TEMP * sizeof(fftw_complex));
+        std::memcpy(&(data->block[i * BLOCK_LEN]), &(data->temp[i * TEMP]), TEMP * sizeof(fftwf_complex)); 
+        std::memcpy(&(data->block[i * BLOCK_LEN + TEMP]), &(data->ordbuffer[i * BLOCK_LEN]), (BLOCK_LEN - TEMP) * sizeof(fftwf_complex));
+        std::memcpy(&(data->temp[i * TEMP]), &(data->ordbuffer[i * BLOCK_LEN + (BLOCK_LEN - TEMP)]), TEMP * sizeof(fftwf_complex));
     }
 
     for (int i = 0; i < NUM_CHANNELS; ++i) // calculate fft for each channel
     {
-        fftw_execute(data->forw_plans[i]);
+        fftwf_execute(data->forw_plans[i]);
     }
 
     // perform lowpass filtering in freq domain
@@ -144,22 +144,22 @@ static void callBack(double* inputBuffer, beamformingData* data, std::string fil
             data->filtered_data[resultID][1] = data->fft_data[dataID][0] * data->LP_filter[j][1] + data->fft_data[dataID][1] * data->LP_filter[j][0];                
         }
         // inverse fourier transform to get back signals in time domain.        
-        fftw_execute(data->back_plans[i]); // amplitude gain BLOCK_LEN
+        fftwf_execute(data->back_plans[i]); // amplitude gain BLOCK_LEN
     }
 
     // copy data blocks to gpu
-    cudaMemcpy(data->gpu_block, data->block, BLOCK_LEN*NUM_CHANNELS*sizeof(fftw_complex), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
+    cudaMemcpy(data->gpu_block, data->block, BLOCK_LEN*NUM_CHANNELS*sizeof(fftwf_complex), cudaMemcpyHostToDevice); // copy buffer to GPU memory    
 
     // prepare cubic spline
     
-    int num_blocks = ceil(NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS / 256.0); 
-    spline_init<<<num_blocks, 256>>>(data->gpu_block, 1.0/SAMPLE_RATE, BLOCK_LEN, data->coeff1, data->coeff2, data->coeff3, data->coeff4, data->cp, data->dp, data->d, data->sigma);
+    int num_blocks = ceil(NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS / 256.0f); 
+    spline_init<<<num_blocks, 256>>>(data->gpu_block, 1.0f/SAMPLE_RATE, BLOCK_LEN, data->coeff1, data->coeff2, data->coeff3, data->coeff4, data->cp, data->dp, data->d, data->sigma);
     cudaDeviceSynchronize();
 
-    //cudaMemcpy(data->coefftemp, data->coeff3, BLOCK_LEN*NUM_CHANNELS*NUM_BEAMS*NUM_BEAMS*sizeof(double), cudaMemcpyDeviceToHost); // copy buffer to GPU memory
+    //cudaMemcpy(data->coefftemp, data->coeff3, BLOCK_LEN*NUM_CHANNELS*NUM_BEAMS*NUM_BEAMS*sizeof(float), cudaMemcpyDeviceToHost); // copy buffer to GPU memory
     //cudaDeviceSynchronize();
 
-    /*std::vector<double> bins(BLOCK_LEN), f1(BLOCK_LEN), f2(BLOCK_LEN), f3(BLOCK_LEN), f4(BLOCK_LEN), f5(BLOCK_LEN), f6(BLOCK_LEN);
+    /*std::vector<float> bins(BLOCK_LEN), f1(BLOCK_LEN), f2(BLOCK_LEN), f3(BLOCK_LEN), f4(BLOCK_LEN), f5(BLOCK_LEN), f6(BLOCK_LEN);
     
     for (int i = 0; i < BLOCK_LEN; ++i)
     {
@@ -189,9 +189,9 @@ static void callBack(double* inputBuffer, beamformingData* data, std::string fil
     beamforming<<<data->numBlocks, data->threadsPerBlock>>>(data->delays, data->coeff1, data->coeff2, data->coeff3, data->coeff4, data->summedSignals, data->mus, data->mus2, data->mus3);
     cudaDeviceSynchronize();
 
-    cudaMemcpy(data->coefftemp, data->coeff1, BLOCK_LEN*NUM_CHANNELS*NUM_BEAMS*NUM_BEAMS*sizeof(double), cudaMemcpyDeviceToHost);
-    cudaMemcpy(data->h_coeff1, data->coeff2, BLOCK_LEN*NUM_CHANNELS*NUM_BEAMS*NUM_BEAMS*sizeof(double), cudaMemcpyDeviceToHost);
-    cudaMemcpy(data->h_coeff2, data->coeff3, BLOCK_LEN*NUM_CHANNELS*NUM_BEAMS*NUM_BEAMS*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(data->coefftemp, data->coeff1, BLOCK_LEN*NUM_CHANNELS*NUM_BEAMS*NUM_BEAMS*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(data->h_coeff1, data->coeff2, BLOCK_LEN*NUM_CHANNELS*NUM_BEAMS*NUM_BEAMS*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(data->h_coeff2, data->coeff3, BLOCK_LEN*NUM_CHANNELS*NUM_BEAMS*NUM_BEAMS*sizeof(float), cudaMemcpyDeviceToHost);
 
     /*printf("%e \n", data->coefftemp[2 * 16 * BLOCK_LEN + 0]);
     printf("%e \n", data->coefftemp[2 * 16 * BLOCK_LEN + 1]);
@@ -212,10 +212,10 @@ static void callBack(double* inputBuffer, beamformingData* data, std::string fil
     printf("%e \n", data->h_coeff2[2 * 16 * BLOCK_LEN + 4]);    
     printf("------------------------------------\n");*/
 
-    cufftExecZ2Z(data->planMany, data->summedSignals, data->summedSignals_fft, CUFFT_FORWARD);
+    cufftExecC2C(data->planMany, data->summedSignals, data->summedSignals_fft, CUFFT_FORWARD);
     cudaDeviceSynchronize();
 
-    cudaMemcpy(data->ss, data->summedSignals, BLOCK_LEN*NUM_BEAMS*NUM_BEAMS*sizeof(cufftDoubleComplex), cudaMemcpyDeviceToHost);
+    cudaMemcpy(data->ss, data->summedSignals, BLOCK_LEN*NUM_BEAMS*NUM_BEAMS*sizeof(cufftComplex), cudaMemcpyDeviceToHost);
 
     /*if (b)
     {
@@ -254,7 +254,7 @@ static void callBack(double* inputBuffer, beamformingData* data, std::string fil
     cudaDeviceSynchronize();    
 
     // copy the intensity of the beams to the cpu
-    cudaMemcpy(data->beams, data->gpu_beams, NUM_BEAMS*NUM_BEAMS*NUM_FILTERS*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(data->beams, data->gpu_beams, NUM_BEAMS*NUM_BEAMS*NUM_FILTERS*sizeof(float), cudaMemcpyDeviceToHost);
     
     std::ofstream file;
     file.open(filename);
@@ -265,7 +265,7 @@ static void callBack(double* inputBuffer, beamformingData* data, std::string fil
     }
     file.close();
 
-    /*double max;
+    /*float max;
     int maxid = 0;
     for (int f = 0; f < 1; ++f)
     {    
@@ -370,22 +370,22 @@ int main()
     
     py::list res = my_func(NUM_FILTERS, NUM_TAPS, BANDWIDTH); // create the filters
     // temporary save state of data
-    std::vector<double> taps;
+    std::vector<float> taps;
     for (py::handle obj : res) {  // iterators!
-        taps.push_back(obj.attr("__float__")().cast<double>());
+        taps.push_back(obj.attr("__float__")().cast<float>());
     }
 
     py::list res2 = my_func(1, NUM_TAPS, 10000.0 / 22050.0);
     // temporary save state of data
-    std::vector<double> taps2;
+    std::vector<float> taps2;
     for (py::handle obj : res2) {  // iterators!
-        taps2.push_back(obj.attr("__float__")().cast<double>());
+        taps2.push_back(obj.attr("__float__")().cast<float>());
     }
 
     // transfer data for real, goal is to get a buffer that looks like (with zero-padded signals):
     // filter1[0], filter1[1], ..., 0, 0, 0, filter2[0], filter2[1], ..., 0, 0, 0
     // -------- BLOCK_LEN samples ---------, -------- BLOCK_LEN samples --------- 
-    fftw_complex* firfilters = (fftw_complex*)malloc(BLOCK_LEN * NUM_FILTERS * sizeof(fftw_complex));
+    fftwf_complex* firfilters = (fftwf_complex*)malloc(BLOCK_LEN * NUM_FILTERS * sizeof(fftwf_complex));
     for (int i = 0; i < NUM_FILTERS; ++i)
     {
         for (int j = 0; j < BLOCK_LEN; ++j)
@@ -399,7 +399,7 @@ int main()
     }
     taps.clear();
 
-    fftw_complex* lpfilter = (fftw_complex*)malloc(BLOCK_LEN * sizeof(fftw_complex));
+    fftwf_complex* lpfilter = (fftwf_complex*)malloc(BLOCK_LEN * sizeof(fftwf_complex));
     for (int i = 0; i < BLOCK_LEN; ++i)
     {
         if (i < NUM_TAPS)
@@ -411,33 +411,33 @@ int main()
     taps2.clear();
 
     // apply fft to filters
-    fftw_complex* firfiltersfft = (fftw_complex*)fftw_malloc(FFT_OUTPUT_SIZE * NUM_FILTERS * sizeof(fftw_complex));
-    data->LP_filter = (fftw_complex*)fftw_malloc(FFT_OUTPUT_SIZE * sizeof(fftw_complex));
-    fftw_plan filter_plans[NUM_FILTERS];
-    fftw_plan lp_filter_plan;
+    fftwf_complex* firfiltersfft = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_FILTERS * sizeof(fftwf_complex));
+    data->LP_filter = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * sizeof(fftwf_complex));
+    fftwf_plan filter_plans[NUM_FILTERS];
+    fftwf_plan lp_filter_plan;
     for (int i = 0; i < NUM_FILTERS; ++i) // create the plans for calculating the fft of each filter block
     {
-        filter_plans[i] = fftw_plan_dft_1d(BLOCK_LEN, &firfilters[i * BLOCK_LEN], &firfiltersfft[i * FFT_OUTPUT_SIZE], FFTW_FORWARD, FFTW_ESTIMATE);
+        filter_plans[i] = fftwf_plan_dft_1d(BLOCK_LEN, &firfilters[i * BLOCK_LEN], &firfiltersfft[i * FFT_OUTPUT_SIZE], FFTW_FORWARD, FFTW_ESTIMATE);
     }
-    lp_filter_plan = fftw_plan_dft_1d(BLOCK_LEN, lpfilter, data->LP_filter, FFTW_FORWARD, FFTW_ESTIMATE);
+    lp_filter_plan = fftwf_plan_dft_1d(BLOCK_LEN, lpfilter, data->LP_filter, FFTW_FORWARD, FFTW_ESTIMATE);
 
     for (int i = 0; i < NUM_FILTERS; ++i)
     {
-        fftw_execute(filter_plans[i]);
+        fftwf_execute(filter_plans[i]);
     }
-    fftw_execute(lp_filter_plan);
+    fftwf_execute(lp_filter_plan);
     
     for (int i = 0; i < NUM_FILTERS; ++i)
     {
-        fftw_destroy_plan(filter_plans[i]);
+        fftwf_destroy_plan(filter_plans[i]);
     }
-    fftw_destroy_plan(lp_filter_plan);
+    fftwf_destroy_plan(lp_filter_plan);
 
-    cudaMalloc(&(data->BP_filter), sizeof(cufftDoubleComplex) * BLOCK_LEN * NUM_FILTERS);
-    cudaMemcpy(data->BP_filter, firfiltersfft, sizeof(cufftDoubleComplex) * BLOCK_LEN * NUM_FILTERS, cudaMemcpyHostToDevice);
-    //cudaMemcpy(firfiltersfft, data->BP_filter, sizeof(cufftDoubleComplex) * BLOCK_LEN * NUM_FILTERS, cudaMemcpyDeviceToHost);
+    cudaMalloc(&(data->BP_filter), sizeof(cufftComplex) * BLOCK_LEN * NUM_FILTERS);
+    cudaMemcpy(data->BP_filter, firfiltersfft, sizeof(cufftComplex) * BLOCK_LEN * NUM_FILTERS, cudaMemcpyHostToDevice);
+    //cudaMemcpy(firfiltersfft, data->BP_filter, sizeof(cufftComplex) * BLOCK_LEN * NUM_FILTERS, cudaMemcpyDeviceToHost);
 
-    /*std::vector<double> bins(BLOCK_LEN), f1(BLOCK_LEN), f2(BLOCK_LEN), f3(BLOCK_LEN), f4(BLOCK_LEN), f5(BLOCK_LEN), f6(BLOCK_LEN);
+    /*std::vector<float> bins(BLOCK_LEN), f1(BLOCK_LEN), f2(BLOCK_LEN), f3(BLOCK_LEN), f4(BLOCK_LEN), f5(BLOCK_LEN), f6(BLOCK_LEN);
     
     for (int i = 0; i < BLOCK_LEN; ++i)
     {
@@ -488,25 +488,25 @@ int main()
     free(lpfilter);    
 
     printf("Create interpolation data.\n");
-    double* theta = linspace(MIN_VIEW, NUM_BEAMS);
-    double* phi = linspace(MIN_VIEW, NUM_BEAMS);
-    double* delay = calcDelays(theta, phi);
+    float* theta = linspace(MIN_VIEW, NUM_BEAMS);
+    float* phi = linspace(MIN_VIEW, NUM_BEAMS);
+    float* delay = calcDelays(theta, phi);
 
     /*int* a = calca(delay);
     int* b = calcb(a);
-    double* alpha = calcalpha(delay, b);
-    double* beta = calcbeta(alpha);
+    float* alpha = calcalpha(delay, b);
+    float* beta = calcbeta(alpha);
 
     cudaMalloc(&(data->a), sizeof(int) * NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS);
     cudaMalloc(&(data->b), sizeof(int) * NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS);
-    cudaMalloc(&(data->alpha), sizeof(double) * NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS);
-    cudaMalloc(&(data->beta), sizeof(double) * NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS);
+    cudaMalloc(&(data->alpha), sizeof(float) * NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS);
+    cudaMalloc(&(data->beta), sizeof(float) * NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS);
     cudaMemcpy(data->a, a, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(data->b, b, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->alpha, alpha, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double), cudaMemcpyHostToDevice);
-    cudaMemcpy(data->beta, beta, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double), cudaMemcpyHostToDevice);*/
+    cudaMemcpy(data->alpha, alpha, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->beta, beta, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);*/
 
-    cudaMalloc(&(data->delays), sizeof(double) * NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS);
+    cudaMalloc(&(data->delays), sizeof(float) * NUM_BEAMS * NUM_BEAMS * NUM_CHANNELS);
     /*printf("Delay %d: %e\n", 1, delay[0 + 84 * NUM_CHANNELS]);
     printf("Delay %d: %e\n", 2, delay[1 + 84 * NUM_CHANNELS]);
     printf("Delay %d: %e\n", 3, delay[2 + 84 * NUM_CHANNELS]);
@@ -524,62 +524,62 @@ int main()
     printf("Delay %d: %e\n", 15, delay[14 + 84 * NUM_CHANNELS]);
     printf("Delay %d: %e\n", 16, delay[15 + 84 * NUM_CHANNELS]);
     printf("----------------------------------------------\n");*/
-    cudaMemcpy(data->delays, delay, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(data->delays, delay, NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float), cudaMemcpyHostToDevice);
 
     free(theta); free(phi); free(delay); //free(a); free(b); free(alpha); free(beta); // free memory which does not have to be allocated anymore*/    
 
-    cudaMalloc(&(data->coeff1), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->coeff2), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->coeff3), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->coeff4), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->cp), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->dp), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->d), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->sigma), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->coeff1), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->coeff2), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->coeff3), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->coeff4), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->cp), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->dp), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->d), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->sigma), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
 
-    cudaMalloc(&(data->mus), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->mus2), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMalloc(&(data->mus3), sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->mus), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->mus2), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMalloc(&(data->mus3), sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
 
-    cudaMemset(data->coeff1, 0, sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMemset(data->coeff2, 0, sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMemset(data->coeff3, 0, sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMemset(data->coeff4, 0, sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMemset(data->cp, 0, sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMemset(data->dp, 0, sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMemset(data->d, 0, sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    cudaMemset(data->sigma, 0, sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMemset(data->coeff1, 0, sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMemset(data->coeff2, 0, sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMemset(data->coeff3, 0, sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMemset(data->coeff4, 0, sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMemset(data->cp, 0, sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMemset(data->dp, 0, sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMemset(data->d, 0, sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    cudaMemset(data->sigma, 0, sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
 
-    data->h_coeff1 = (double*)malloc(sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    data->h_coeff2 = (double*)malloc(sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    data->h_coeff3 = (double*)malloc(sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    data->h_coeff4 = (double*)malloc(sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
-    data->coefftemp = (double*)malloc(sizeof(double) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    data->h_coeff1 = (float*)malloc(sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    data->h_coeff2 = (float*)malloc(sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    data->h_coeff3 = (float*)malloc(sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    data->h_coeff4 = (float*)malloc(sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
+    data->coefftemp = (float*)malloc(sizeof(float) * BLOCK_LEN * NUM_CHANNELS * NUM_BEAMS * NUM_BEAMS);
 
     printf("Create remaining buffers\n");
-    data->beams = (double*)malloc(NUM_BEAMS * NUM_BEAMS * NUM_FILTERS * sizeof(double));
-    std::memset(data->beams, 0.0, NUM_BEAMS * NUM_BEAMS * NUM_FILTERS * sizeof(double));
-    cudaMalloc(&(data->gpu_beams), sizeof(double) * NUM_BEAMS * NUM_BEAMS * NUM_FILTERS);
+    data->beams = (float*)malloc(NUM_BEAMS * NUM_BEAMS * NUM_FILTERS * sizeof(float));
+    std::memset(data->beams, 0.0, NUM_BEAMS * NUM_BEAMS * NUM_FILTERS * sizeof(float));
+    cudaMalloc(&(data->gpu_beams), sizeof(float) * NUM_BEAMS * NUM_BEAMS * NUM_FILTERS);
 
-    cudaMalloc(&(data->gpu_block), sizeof(cufftDoubleComplex) * NUM_CHANNELS * BLOCK_LEN);
+    cudaMalloc(&(data->gpu_block), sizeof(cufftComplex) * NUM_CHANNELS * BLOCK_LEN);
 
-    data->temp = (fftw_complex*)fftw_malloc(TEMP * NUM_CHANNELS * sizeof(fftw_complex));
+    data->temp = (fftwf_complex*)fftwf_malloc(TEMP * NUM_CHANNELS * sizeof(fftwf_complex));
     for (int i = 0; i < TEMP * NUM_CHANNELS; ++i)
     {
         data->temp[i][0] = 0.0;
         data->temp[i][1] = 0.0;
     }
 
-    data->ordbuffer = (fftw_complex*)fftw_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(fftw_complex));
-    data->block = (fftw_complex*)fftw_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(fftw_complex));
+    data->ordbuffer = (fftwf_complex*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(fftwf_complex));
+    data->block = (fftwf_complex*)fftwf_malloc(BLOCK_LEN * NUM_CHANNELS * sizeof(fftwf_complex));
     
-    data->ss = (fftw_complex*)fftw_malloc(NUM_BEAMS * NUM_BEAMS * BLOCK_LEN * sizeof(fftw_complex));
-    cudaMalloc(&(data->summedSignals), sizeof(cufftDoubleComplex) * NUM_BEAMS * NUM_BEAMS * BLOCK_LEN);
-    cudaMalloc(&(data->summedSignals_fft), sizeof(cufftDoubleComplex) * NUM_BEAMS * NUM_BEAMS * BLOCK_LEN);
-    cudaMalloc(&(data->summedSignals_fft_BP), sizeof(cufftDoubleComplex) * NUM_BEAMS * NUM_BEAMS * BLOCK_LEN * NUM_FILTERS);
+    data->ss = (fftwf_complex*)fftwf_malloc(NUM_BEAMS * NUM_BEAMS * BLOCK_LEN * sizeof(fftwf_complex));
+    cudaMalloc(&(data->summedSignals), sizeof(cufftComplex) * NUM_BEAMS * NUM_BEAMS * BLOCK_LEN);
+    cudaMalloc(&(data->summedSignals_fft), sizeof(cufftComplex) * NUM_BEAMS * NUM_BEAMS * BLOCK_LEN);
+    cudaMalloc(&(data->summedSignals_fft_BP), sizeof(cufftComplex) * NUM_BEAMS * NUM_BEAMS * BLOCK_LEN * NUM_FILTERS);
 
-    data->fft_data = (fftw_complex*)fftw_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftw_complex));
-    data->filtered_data = (fftw_complex*)fftw_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftw_complex));    
+    data->fft_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));
+    data->filtered_data = (fftwf_complex*)fftwf_malloc(FFT_OUTPUT_SIZE * NUM_CHANNELS * sizeof(fftwf_complex));    
 
     for (int i = 0; i < BLOCK_LEN * NUM_CHANNELS; ++i)
     {
@@ -598,15 +598,15 @@ int main()
     int inembed[] = {BLOCK_LEN};
     int onembed[] = {BLOCK_LEN};
     
-    cufftPlanMany(&(data->planMany), 1, n, inembed, 1, BLOCK_LEN, onembed, 1, BLOCK_LEN, CUFFT_Z2Z, NUM_BEAMS*NUM_BEAMS);
+    cufftPlanMany(&(data->planMany), 1, n, inembed, 1, BLOCK_LEN, onembed, 1, BLOCK_LEN, CUFFT_C2C, NUM_BEAMS*NUM_BEAMS);
 
     for (int i = 0; i < NUM_CHANNELS; ++i) // create the plans for calculating the fft of each channel block
     {
-        data->forw_plans[i] = fftw_plan_dft_1d(BLOCK_LEN, &data->block[i * BLOCK_LEN], &data->fft_data[i * FFT_OUTPUT_SIZE], FFTW_FORWARD, FFTW_ESTIMATE); // NUM_CHANNELS channels for each block which requires FFT_OUTPUT_SIZE spots to store the fft data
-        data->back_plans[i] = fftw_plan_dft_1d(BLOCK_LEN, &data->filtered_data[i * FFT_OUTPUT_SIZE], &data->block[i * BLOCK_LEN], FFTW_BACKWARD, FFTW_ESTIMATE);
+        data->forw_plans[i] = fftwf_plan_dft_1d(BLOCK_LEN, &data->block[i * BLOCK_LEN], &data->fft_data[i * FFT_OUTPUT_SIZE], FFTW_FORWARD, FFTW_ESTIMATE); // NUM_CHANNELS channels for each block which requires FFT_OUTPUT_SIZE spots to store the fft data
+        data->back_plans[i] = fftwf_plan_dft_1d(BLOCK_LEN, &data->filtered_data[i * FFT_OUTPUT_SIZE], &data->block[i * BLOCK_LEN], FFTW_BACKWARD, FFTW_ESTIMATE);
     }
 
-    double* input = (double*)malloc(BLOCK_LEN * 3 * sizeof(double));
+    float* input = (float*)malloc(BLOCK_LEN * 3 * sizeof(float));
     for (int i = 0; i < BLOCK_LEN * 3; ++i)
     {
         input[i] = cosf(2 * M_PI * 500.0 * (1.0 / SAMPLE_RATE) * i);// + cosf(2 * M_PI * 1500.0 * (1.0 / SAMPLE_RATE) * i) + \
@@ -683,7 +683,7 @@ int main()
 
     free(input);
 
-    /*std::vector<double> d(BLOCK_LEN), in(BLOCK_LEN), LP(BLOCK_LEN), filt(BLOCK_LEN);
+    /*std::vector<float> d(BLOCK_LEN), in(BLOCK_LEN), LP(BLOCK_LEN), filt(BLOCK_LEN);
 
     for (int i = 0; i < BLOCK_LEN; ++i)
     {
@@ -718,7 +718,7 @@ int main()
     inputParameters.channelCount = NUM_CHANNELS;
     inputParameters.device = device;
     inputParameters.hostApiSpecificStreamInfo = NULL;
-    inputParameters.sampleFormat = padouble32;
+    inputParameters.sampleFormat = pafloat32;
     inputParameters.suggestedLatency = Pa_GetDeviceInfo(device)->defaultLowInputLatency;
 
     // Open the PortAudio stream
@@ -746,7 +746,7 @@ int main()
 
     //PyObject *mat1, *mat2, *mat3, *mat4, *mat5, *mat6;
 
-    //std::vector<double> d(BLOCK_LEN), fft_data(BLOCK_LEN), LP(BLOCK_LEN), block(BLOCK_LEN), summedsignal(BLOCK_LEN);
+    //std::vector<float> d(BLOCK_LEN), fft_data(BLOCK_LEN), LP(BLOCK_LEN), block(BLOCK_LEN), summedsignal(BLOCK_LEN);
     while( ( err = Pa_IsStreamActive( stream ) ) == 1 )    
     {
         /*int beam = 84;
@@ -815,7 +815,7 @@ int main()
         /*plt::figure(1);
         plt::title("Max direction plot");
         plt::clf();
-        plt::scatter(std::vector<double>{theta[data->thetaID] * 180.0 / (double)M_PI}, std::vector<double>{phi[data->phiID] * 180.0 / (double)M_PI}, 25.0, {{"color", "red"}});
+        plt::scatter(std::vector<float>{theta[data->thetaID] * 180.0 / (float)M_PI}, std::vector<float>{phi[data->phiID] * 180.0 / (float)M_PI}, 25.0, {{"color", "red"}});
         plt::xlim(MIN_VIEW, MAX_VIEW);
         plt::ylim(MIN_VIEW, MAX_VIEW);
         plt::xlabel("theta");

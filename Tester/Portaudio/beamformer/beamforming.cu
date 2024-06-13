@@ -1,7 +1,7 @@
 #include "beamforming.h"
 
 /*__global__
-void interpolateChannels(const cufftDoubleComplex* inputBuffer, cufftDoubleComplex* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta)
+void interpolateChannels(const cufftComplex* inputBuffer, cufftComplex* summedSignals, const int i, const int* a, const int* b, const float* alpha, const float* beta)
 {
     int id;    
     int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index of this thread
@@ -27,8 +27,8 @@ void interpolateChannels(const cufftDoubleComplex* inputBuffer, cufftDoubleCompl
 }*/
 
 __global__
-void interpolateChannels(const double* time_stamps, double dt, cufftDoubleComplex* summedSignals, const int i, \
-                            const double* coeff1, const double* coeff2, const double* coeff3, const double* coeff4, double* mus, double* mus2, double* mus3)
+void interpolateChannels(const float* time_stamps, float dt, cufftComplex* summedSignals, const int i, \
+                            const float* coeff1, const float* coeff2, const float* coeff3, const float* coeff4, float* mus, float* mus2, float* mus3)
 {
     // i indicates the current beam    
     int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index of this thread
@@ -38,14 +38,14 @@ void interpolateChannels(const double* time_stamps, double dt, cufftDoubleComple
     // l2 -> 0 - 2047 + i * 2048, i -> 0 - 168
 
     std::size_t knot;
-    double mu, mu2, mu3;
+    float mu, mu2, mu3;
 
-    double dt_inv = 1 / dt;
+    float dt_inv = 1.0f / dt;
 
     summedSignals[l2].x = 0.0f;
     for (int j = 0; j < NUM_CHANNELS; ++j)
     {
-        mu = time_stamps[i * NUM_CHANNELS + j] + (double)(l1 * dt);
+        mu = time_stamps[i * NUM_CHANNELS + j] + (float)(l1 * dt);
         //   delay for beam i, channel k       + sample * delta_T
         // mu is the time point where interpolation should happen
 
@@ -55,7 +55,7 @@ void interpolateChannels(const double* time_stamps, double dt, cufftDoubleComple
         if (knot >= BLOCK_LEN) // sample to interpolate with has not reached the microphone yet
             continue;
 
-        mu = mu - (double)knot*dt;
+        mu = mu - (float)knot*dt;
         // mu is now the time difference between the time_stamp where interpolation
         // should happen and the time_stamp that corresponds to sample knot
 
@@ -73,9 +73,9 @@ void interpolateChannels(const double* time_stamps, double dt, cufftDoubleComple
     }    
 }
 
-//void beamforming(const cufftDoubleComplex* inputBuffer, const int* a, const int* b, float* alpha, const float* beta, cufftDoubleComplex* summedSignals)
+//void beamforming(const cufftComplex* inputBuffer, const int* a, const int* b, float* alpha, const float* beta, cufftComplex* summedSignals)
 __global__ 
-void beamforming(const double* delays, const double* coeff1, const double* coeff2, const double* coeff3, const double* coeff4, cufftDoubleComplex* summedSignals, double* mus, double* mus2, double* mus3)
+void beamforming(const float* delays, const float* coeff1, const float* coeff2, const float* coeff3, const float* coeff4, cufftComplex* summedSignals, float* mus, float* mus2, float* mus3)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -85,6 +85,6 @@ void beamforming(const double* delays, const double* coeff1, const double* coeff
 
     // interpolate channels    
     //interpolateChannels<<<(BLOCK_LEN+255)/256, 256>>>(inputBuffer, summedSignals, i, a, b, alpha, beta);
-    interpolateChannels<<<(BLOCK_LEN+255)/256, 256>>>(delays, 1.0f/SAMPLE_RATE, summedSignals, i, coeff1, coeff2, coeff3, coeff4, mus, mus2, mus3);
+    interpolateChannels<<<(BLOCK_LEN+255)/256.0f, 256>>>(delays, 1.0f/SAMPLE_RATE, summedSignals, i, coeff1, coeff2, coeff3, coeff4, mus, mus2, mus3);
     cudaDeviceSynchronize();    
 }

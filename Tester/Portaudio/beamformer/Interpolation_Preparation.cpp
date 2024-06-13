@@ -1,11 +1,11 @@
 #include "Interpolation_Preparation.h"
 #include <stdio.h>
 
-double* linspace(int a, int num)
+float* linspace(int a, int num)
 {
     // create a vector of length num
-    //std::vector<double> v(NUM_BEAMS, 0);    
-    double* f = (double*)malloc(NUM_BEAMS*sizeof(double));    
+    //std::vector<float> v(NUM_BEAMS, 0);    
+    float* f = (float*)malloc(NUM_BEAMS*sizeof(float));    
              
     // now assign the values to the array
     for (int i = 0; i < num; i++)
@@ -15,14 +15,14 @@ double* linspace(int a, int num)
     return f;
 }
 
-double* calcDelays(double* theta, double* phi)
+float* calcDelays(float* theta, float* phi)
 {
-    double* d = (double*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double));    
+    float* d = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));    
 
     int pid = 0; // phi index
     int tid = 0; // theta index
     for (int i = 0; i < NUM_BEAMS * NUM_BEAMS; ++i){
-        double min = 1e10;
+        float min = 1e10;
         for (int k = 0; k < NUM_CHANNELS; ++k){
             d[k + i * NUM_CHANNELS] = -(xa[k] * sinf(theta[tid]) * cosf(phi[pid]) + ya[k] * sinf(phi[pid])) * ARRAY_DIST / C;// * SAMPLE_RATE;
             if (d[k + i * NUM_CHANNELS] < min)
@@ -43,7 +43,7 @@ double* calcDelays(double* theta, double* phi)
     return d;
 }
 
-int* calca(double* delay)
+int* calca(float* delay)
 {
     int* a = (int*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(int));
     for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
@@ -63,9 +63,9 @@ int* calcb(int* a)
     return b;
 }
 
-double* calcalpha(double* delay, int* b)
+float* calcalpha(float* delay, int* b)
 {
-    double* alpha = (double*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double));
+    float* alpha = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));
     for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
     {
         alpha[i] = b[i] - delay[i];
@@ -73,9 +73,9 @@ double* calcalpha(double* delay, int* b)
     return alpha;
 }
 
-double* calcbeta(double* alpha)
+float* calcbeta(float* alpha)
 {
-    double* beta = (double*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double));
+    float* beta = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));
     for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
     {
         beta[i] = 1 - alpha[i];

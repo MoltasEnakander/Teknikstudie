@@ -6,9 +6,9 @@
 #include <cmath>
 
 __global__
-void bandpass_filtering_calcs(int i, cufftDoubleComplex* summedSignals_fft_BP, cufftDoubleComplex* summedSignals_fft, cufftDoubleComplex* BP_filter);
+void bandpass_filtering_calcs(int i, cufftComplex* summedSignals_fft_BP, cufftComplex* summedSignals_fft, cufftComplex* BP_filter);
 
 __global__
-void bandpass_filtering(cufftDoubleComplex* summedSignals_fft_BP, cufftDoubleComplex* summedSignals_fft, cufftDoubleComplex* BP_filter, double* beams);
+void bandpass_filtering(cufftComplex* summedSignals_fft_BP, cufftComplex* summedSignals_fft, cufftComplex* BP_filter, float* beams);
 
 #endif

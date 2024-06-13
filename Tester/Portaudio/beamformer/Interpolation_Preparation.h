@@ -6,19 +6,19 @@
 #include "definitions.h"
 
 // positions in the microphone array
-static double xa[16] = {-0.5, -1.5, -0.5, -1.5, -0.5, -1.5, -0.5, -1.5, 1.5, 0.5, 1.5, 0.5, 1.5, 0.5, 1.5, 0.5};
-static double ya[16] = {-1.5, -1.5, -0.5, -0.5, 0.5, 0.5, 1.5, 1.5, 1.5, 1.5, 0.5, 0.5, -0.5, -0.5, -1.5, -1.5};
+static float xa[16] = {-0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, -0.5f, -1.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f, 1.5f, 0.5f};
+static float ya[16] = {-1.5f, -1.5f, -0.5f, -0.5f, 0.5f, 0.5f, 1.5f, 1.5f, 1.5f, 1.5f, 0.5f, 0.5f, -0.5f, -0.5f, -1.5f, -1.5f};
 
-double* linspace(int a, int num);
+float* linspace(int a, int num);
 
-double* calcDelays(double* theta, double* phi);
+float* calcDelays(float* theta, float* phi);
 
-int* calca(double* delay);
+int* calca(float* delay);
 
 int* calcb(int* a);
 
-double* calcalpha(double* delay, int* b);
+float* calcalpha(float* delay, int* b);
 
-double* calcbeta(double* alpha);
+float* calcbeta(float* alpha);
 
 #endif

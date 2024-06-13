@@ -1,7 +1,7 @@
 #include "Coeff_Calc.h"
 
 __global__
-void spline_init(cufftDoubleComplex* y, double dx, std::size_t signal_length, double* coeff1, double* coeff2, double* coeff3, double* coeff4, double* cp, double* dp, double* d, double* sigma)
+void spline_init(cufftComplex* y, float dx, std::size_t signal_length, float* coeff1, float* coeff2, float* coeff3, float* coeff4, float* cp, float* dp, float* d, float* sigma)
 {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -19,11 +19,11 @@ void spline_init(cufftDoubleComplex* y, double dx, std::size_t signal_length, do
     */
 
     //Based on http://www.maths.lth.se/na/courses/FMN081/FMN081-06/lecture11.pdf
-	double h = dx;
-	double h2 = h * h;
-	double h_inv = 1.0f / h;
-	double h2_inv = 1.0f / h2;
-	const double c_1_6 = 1.0f / 6.0f;
+	float h = dx;
+	float h2 = h * h;
+	float h_inv = 1.0f / h;
+	float h2_inv = 1.0f / h2;
+	const float c_1_6 = 1.0f / 6.0f;
 	const int n = int(signal_length);
 
 	int global_id = j * BLOCK_LEN + k * NUM_CHANNELS * BLOCK_LEN;
@@ -38,9 +38,9 @@ void spline_init(cufftDoubleComplex* y, double dx, std::size_t signal_length, do
 	//Using Tridiagonal matrix algorithm
 	//Thomas algorithm (https://en.wikipedia.org/wiki/Tridiagonal_matrix_algorithm)
 
-	double a_0 = 1.0f;
-	double b_0 = 4.0f;
-	double c_0 = 1.0f;
+	float a_0 = 1.0f;
+	float b_0 = 4.0f;
+	float c_0 = 1.0f;
 	cp[1 + global_id] = c_0 / b_0;
 	dp[1 + global_id] = d[1 + global_id]/b_0;
 

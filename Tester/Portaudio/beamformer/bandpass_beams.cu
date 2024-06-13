@@ -1,7 +1,7 @@
 #include "bandpass_beams.h"
 
 __global__
-void bandpass_filtering_calcs(int i, cufftDoubleComplex* summedSignals_fft_BP, cufftDoubleComplex* summedSignals_fft, cufftDoubleComplex* BP_filter)
+void bandpass_filtering_calcs(int i, cufftComplex* summedSignals_fft_BP, cufftComplex* summedSignals_fft, cufftComplex* BP_filter)
 {
     int l1 = blockIdx.x * blockDim.x + threadIdx.x; // internal index, from 0 to BLOCK_LEN - 1
     int l2 = blockIdx.x * blockDim.x + threadIdx.x + i * BLOCK_LEN; // internal index + compensation for which beam is being calced
@@ -20,7 +20,7 @@ void bandpass_filtering_calcs(int i, cufftDoubleComplex* summedSignals_fft_BP, c
 }
 
 __global__
-void bandpass_filtering(cufftDoubleComplex* summedSignals_fft_BP, cufftDoubleComplex* summedSignals_fft, cufftDoubleComplex* BP_filter, double* beams)
+void bandpass_filtering(cufftComplex* summedSignals_fft_BP, cufftComplex* summedSignals_fft, cufftComplex* BP_filter, float* beams)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;    
 
@@ -29,10 +29,10 @@ void bandpass_filtering(cufftDoubleComplex* summedSignals_fft_BP, cufftDoubleCom
     }
 
     // calculations
-    bandpass_filtering_calcs<<<(BLOCK_LEN+255)/256, 256>>>(i, summedSignals_fft_BP, summedSignals_fft, BP_filter);
+    bandpass_filtering_calcs<<<(BLOCK_LEN+255)/256.0f, 256>>>(i, summedSignals_fft_BP, summedSignals_fft, BP_filter);
     cudaDeviceSynchronize();
 
-    double beamstrength;
+    float beamstrength;
     int id;
     for (int j = 0; j < NUM_FILTERS; ++j)
     {
@@ -43,6 +43,6 @@ void bandpass_filtering(cufftDoubleComplex* summedSignals_fft_BP, cufftDoubleCom
 
             beamstrength += summedSignals_fft_BP[id].x * summedSignals_fft_BP[id].x + summedSignals_fft_BP[id].y * summedSignals_fft_BP[id].y;
         }
-        beams[i + j * NUM_BEAMS * NUM_BEAMS] = 20 * log10(sqrtf(beamstrength) / ( (double)NUM_CHANNELS * (double)(BLOCK_LEN * BLOCK_LEN * sqrtf((double)BLOCK_LEN))));
+        beams[i + j * NUM_BEAMS * NUM_BEAMS] = 20.0f * log10(sqrtf(beamstrength) / ( (float)NUM_CHANNELS * (float)(BLOCK_LEN * BLOCK_LEN * sqrtf((float)BLOCK_LEN))));
     }
 }

@@ -9,8 +9,8 @@
 
 //Init cubic spline interpolation, precalculation of coefficients. Assumption: fs=1
 __global__
-void spline_init(cufftDoubleComplex* y, double dx, std::size_t signal_length, double* coeff1, double* coeff2, double* coeff3, double* coeff4, double* cp, double* dp, double* d, double* sigma);
+void spline_init(cufftComplex* y, float dx, std::size_t signal_length, float* coeff1, float* coeff2, float* coeff3, float* coeff4, float* cp, float* dp, float* d, float* sigma);
 
-//void spline_init(fftwf_complex* y, double dx, std::size_t signal_length, double* coeff1, double* coeff2, double* coeff3, double* coeff4);
+//void spline_init(fftwf_complex* y, float dx, std::size_t signal_length, float* coeff1, float* coeff2, float* coeff3, float* coeff4);
 
 #endif
