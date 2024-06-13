@@ -16,7 +16,7 @@
 //#include "mex.h"
 #include "Coeff_Calc.h"
 
-void spline_init(fftwf_complex* y, float dx, std::size_t signal_length, float* coeff1, float* coeff2, float* coeff3, float* coeff4)
+void spline_init(fftw_complex* y, float dx, std::size_t signal_length, float* coeff1, float* coeff2, float* coeff3, float* coeff4)
 {
 	//Based on http://www.maths.lth.se/na/courses/FMN081/FMN081-06/lecture11.pdf
 	float h = dx;
@@ -66,7 +66,7 @@ void spline_init(fftwf_complex* y, float dx, std::size_t signal_length, float* c
 		coeff2[idx] = (y[idx + 1][0] - y[idx][0]) * h_inv - h * (2.0f * sigma[idx] + sigma[idx + 1]) * c_1_6; //c
 	}
 
-	delete[] cp,d,dp,sigma;	
+	delete[] cp,d,dp,sigma;
 }
 
 

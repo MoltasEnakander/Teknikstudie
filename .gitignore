@@ -4,5 +4,6 @@ Tester/Beampattern/data/
 Inspelningar/
 Tester/Portaudio/build/
 Tester/Portaudio/lib
-Tester/Portaudio/*.txt
+Tester/Portaudio/txtfiles/*.txt
+Tester/Portaudio/beamformer/__pychache__/
 

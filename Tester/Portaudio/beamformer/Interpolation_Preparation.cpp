@@ -1,10 +1,11 @@
 #include "Interpolation_Preparation.h"
+#include <stdio.h>
 
-float* linspace(int a, int num)
+double* linspace(int a, int num)
 {
     // create a vector of length num
     //std::vector<double> v(NUM_BEAMS, 0);    
-    float* f = (float*)malloc(NUM_BEAMS*sizeof(float));    
+    double* f = (double*)malloc(NUM_BEAMS*sizeof(double));    
              
     // now assign the values to the array
     for (int i = 0; i < num; i++)
@@ -14,16 +15,25 @@ float* linspace(int a, int num)
     return f;
 }
 
-float* calcDelays(float* theta, float* phi)
+double* calcDelays(double* theta, double* phi)
 {
-    float* d = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));    
+    double* d = (double*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double));    
 
     int pid = 0; // phi index
     int tid = 0; // theta index
-    for (int i = 0; i < NUM_BEAMS * NUM_BEAMS; ++i){        
+    for (int i = 0; i < NUM_BEAMS * NUM_BEAMS; ++i){
+        double min = 1e10;
         for (int k = 0; k < NUM_CHANNELS; ++k){
-            d[k + i * NUM_CHANNELS] = -(xa[k] * sinf(theta[tid]) * cosf(phi[pid]) + ya[k] * sinf(phi[pid])) * ARRAY_DIST / C * SAMPLE_RATE;
+            d[k + i * NUM_CHANNELS] = -(xa[k] * sinf(theta[tid]) * cosf(phi[pid]) + ya[k] * sinf(phi[pid])) * ARRAY_DIST / C;// * SAMPLE_RATE;
+            if (d[k + i * NUM_CHANNELS] < min)
+                min = d[k + i * NUM_CHANNELS];
         }
+        for (int k = 0; k < NUM_CHANNELS; ++k)
+        {
+            d[k + i * NUM_CHANNELS] -= min;
+            //printf("Delay for beam %d, channel %d: %f\n", i + 1, k + 1, d[k + i * NUM_CHANNELS]);
+        }
+
         tid++;
         if (tid >= NUM_BEAMS){
             tid = 0;
@@ -33,13 +43,12 @@ float* calcDelays(float* theta, float* phi)
     return d;
 }
 
-int* calca(float* delay)
+int* calca(double* delay)
 {
     int* a = (int*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(int));
     for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
     {
         a[i] = floor(delay[i]);
-        //printf("Beam %d, channel %d, a: %d \n", (i+NUM_CHANNELS) / NUM_CHANNELS , i % NUM_CHANNELS + 1, a[i]);
     }
     return a;
 }
@@ -54,9 +63,9 @@ int* calcb(int* a)
     return b;
 }
 
-float* calcalpha(float* delay, int* b)
+double* calcalpha(double* delay, int* b)
 {
-    float* alpha = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));
+    double* alpha = (double*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double));
     for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
     {
         alpha[i] = b[i] - delay[i];
@@ -64,9 +73,9 @@ float* calcalpha(float* delay, int* b)
     return alpha;
 }
 
-float* calcbeta(float* alpha)
+double* calcbeta(double* alpha)
 {
-    float* beta = (float*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(float));
+    double* beta = (double*)malloc(NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS*sizeof(double));
     for (int i = 0; i < NUM_BEAMS*NUM_BEAMS*NUM_CHANNELS; ++i)
     {
         beta[i] = 1 - alpha[i];
