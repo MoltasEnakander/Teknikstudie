@@ -40,10 +40,10 @@ typedef struct {
     int thetaID[NUM_FILTERS];       // theta index of the strongest beam per frequency block
     int phiID[NUM_FILTERS];         // phi index of the strongest beam per frequency block
 
-    /*int* a;                         // linear interpolation data
+    int* a;                         // linear interpolation data
     int* b;
     float* alpha;
-    float* beta;*/
+    float* beta;
 
     fftwf_complex* temp;            // temp storage for the part of the new input block which is to be saved for future use
     fftwf_complex* ordbuffer;       // ordered version of buffer, samples are sorted by channel first, sample id second
@@ -62,31 +62,7 @@ typedef struct {
     cufftComplex* summedSignals_fft;
     cufftComplex* summedSignals_fft_BP;    
     cufftComplex* BP_filter;            // fft:s of the bandpass filters
-
-    float* h_coeff1;
-    float* h_coeff2;
-    float* h_coeff3;
-    float* h_coeff4;
-
-    float* coeff1;          // for cubic spline interpolation
-    float* coeff2;
-    float* coeff3;
-    float* coeff4;
-    float* cp;
-    float* dp;
-    float* d;
-    float* sigma;
-
-    float* delays;
-
-    float* coefftemp;
-    float* coefftemp2;
-    float* mus2;
-    float* mus3;
-    float* mus;
-
-    fftwf_complex* ss;
-
+    
 } beamformingData;
 
 #endif
